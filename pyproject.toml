@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tele-secretary"
+version = "0.1.0"
+description = "Telegram-first personal task and reminder assistant."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "python-telegram-bot>=21,<23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tele_secretary = ["migrations/*.sql"]

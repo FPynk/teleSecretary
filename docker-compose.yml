@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SECRETARY_DATA_DIR: /data
+      SECRETARY_LOG_DIR: /logs
+      SECRETARY_DB_PATH: /data/secretary.sqlite3
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
