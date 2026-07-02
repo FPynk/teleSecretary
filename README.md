@@ -54,6 +54,10 @@ pytest is not installed:
 python -m unittest discover -s tests
 ```
 
+SQLite-backed tests should explicitly close database connections before their
+temporary directories are cleaned up. This keeps test cleanup reliable on both
+Unix-like systems and Windows, especially while SQLite WAL files are present.
+
 ## Docker
 
 ```bash

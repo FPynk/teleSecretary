@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-02
+
+### Phase 1 Core Task Foundation
+- Added the Phase 1 item/task/note schema migration with `items`, `task_items`, `note_items`, `categories`, `tags`, `item_tags`, and `completion_logs`.
+- Added database constraints, indexes, and subtype triggers for core task/note integrity.
+- Added reusable task and note application services for create, details, active listing, vocabulary listing, update, complete, reopen, soft delete, and note creation.
+- Standardized Phase 1 domain timestamps on application-generated UTC ISO text.
+- Added explicit-close SQLite test helpers so persistence tests clean up reliably on Windows and Unix-like systems.
+- Added Phase 1 schema and service tests for gold flows and validation edges.
+
+### Verification
+- `python -m unittest discover -s tests` passed.
+- `python -m compileall src tests` passed when bytecode cache output was redirected with `PYTHONPYCACHEPREFIX`.
+- `python -m pytest` could not run because `pytest` is not installed in this environment.
+
 ## 2026-04-19
 
 ### Phase 0 Foundation
