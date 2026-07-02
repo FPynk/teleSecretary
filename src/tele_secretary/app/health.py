@@ -20,7 +20,8 @@ def perform_healthcheck(config: AppConfig) -> HealthCheckResult:
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.log_dir.mkdir(parents=True, exist_ok=True)
 
-    with connect(config.db_path) as conn:
+    conn = connect(config.db_path)
+    try:
         apply_migrations(conn)
         checked_at = utc_now_iso()
         details = "database connection and write path ok"
@@ -32,5 +33,7 @@ def perform_healthcheck(config: AppConfig) -> HealthCheckResult:
                 """,
                 (checked_at, "ok", details),
             )
+    finally:
+        conn.close()
 
     return HealthCheckResult(status="ok", details=details)
