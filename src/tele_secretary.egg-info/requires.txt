@@ -1,0 +1,4 @@
+python-telegram-bot<23,>=21
+
+[dev]
+pytest<9,>=8
