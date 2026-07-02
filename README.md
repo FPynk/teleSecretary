@@ -2,20 +2,29 @@
 
 Telegram-first personal task and reminder assistant.
 
-## Phase 0 Status
+## Current Status
 
-This repository currently contains the Phase 0 foundation:
+This repository currently contains the Phase 0 foundation plus the Phase 1 task
+data model and a first task-list Telegram command:
 
 - Python package under `src/tele_secretary`
 - environment-driven configuration
 - SQLite connection and SQL migration runner
 - foundation tables for users, reference sequences, and health checks
+- Phase 1 task/note/category/tag tables and task services
 - application-level health and help actions
-- Telegram long-polling bootstrap with `/ping` and `/help`
+- Telegram long-polling bootstrap with `/ping`, `/help`, and `/list`
 - Docker and Docker Compose setup
 - unit tests for the foundation pieces
 
-Task CRUD, reminders, natural-language parsing, and LLM integration are later phases.
+Task mutation commands, reminders, natural-language parsing, and LLM integration
+are later phases.
+
+## Telegram Commands
+
+- `/ping` - check that TeleSecretary is awake
+- `/help` - show the command list
+- `/list` - show active tasks
 
 ## Local Setup
 
@@ -32,6 +41,10 @@ Fill in `TELEGRAM_BOT_TOKEN` in `.env` before starting the bot. Set
 `TELEGRAM_ALLOWED_USER_IDS` to a comma-separated list of Telegram user IDs to
 restrict access. If it is empty, the Phase 0 bot allows any Telegram user who can
 message it.
+
+Task commands are currently single-user. Use your Telegram ID in
+`TELEGRAM_ALLOWED_USER_IDS`; the first ID in that list is treated as the task
+owner.
 
 ## Commands
 

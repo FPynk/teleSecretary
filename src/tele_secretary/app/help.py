@@ -8,8 +8,9 @@ def get_help_text() -> str:
         [
             "Commands:",
             "- /ping - check that TeleSecretary is awake",
+            "- /list - show active tasks",
             "- /help - show this command list",
             "",
-            "Task commands are coming in Phase 2 after the core task model is built.",
+            "More task commands are coming in Phase 2.",
         ]
     )

@@ -6,6 +6,7 @@
 - Added the Phase 1 item/task/note schema migration with `items`, `task_items`, `note_items`, `categories`, `tags`, `item_tags`, and `completion_logs`.
 - Added database constraints, indexes, and subtype triggers for core task/note integrity.
 - Added reusable task and note application services for create, details, active listing, vocabulary listing, update, complete, reopen, soft delete, and note creation.
+- Added Telegram `/list` to show active tasks for the configured single owner.
 - Standardized Phase 1 domain timestamps on application-generated UTC ISO text.
 - Added explicit-close SQLite test helpers so persistence tests clean up reliably on Windows and Unix-like systems.
 - Added Phase 1 schema and service tests for gold flows and validation edges.
