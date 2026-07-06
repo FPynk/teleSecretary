@@ -5,7 +5,7 @@ Telegram-first personal task and reminder assistant.
 ## Current Status
 
 This repository currently contains the Phase 0 foundation plus the Phase 1 task
-data model and a first task-list Telegram command:
+data model and the first direct Telegram task commands:
 
 - Python package under `src/tele_secretary`
 - environment-driven configuration
@@ -44,6 +44,9 @@ restrict access. If it is empty, Telegram commands are disabled.
 Task commands are currently single-user. Use your Telegram ID in
 `TELEGRAM_ALLOWED_USER_IDS`; the first ID in that list is treated as the task
 owner.
+
+The bot applies pending migrations once during startup. Individual Telegram
+command handlers assume the database schema is already ready.
 
 ## Commands
 

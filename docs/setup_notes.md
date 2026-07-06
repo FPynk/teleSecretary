@@ -136,7 +136,7 @@ SECRETARY_LOG_LEVEL=INFO
 
 `TELEGRAM_ALLOWED_USER_IDS` should contain your Telegram ID. TeleSecretary is
 currently a one-user service, and the first allowed ID is treated as the task
-owner.
+owner. If this value is empty, Telegram commands are disabled.
 
 The Docker Compose file overrides the data paths inside the container:
 
@@ -196,6 +196,7 @@ In Telegram, send:
 /ping
 /help
 /list
+/addtask Test homelab setup --due 31/12/2026
 ```
 
 ---
@@ -220,6 +221,7 @@ Runtime behavior:
 - The container starts the Python bot process.
 - `tele_secretary` loads configuration from the environment.
 - The bot applies pending migrations on startup.
+- Telegram command handlers do not run migrations per command.
 - The bot starts Telegram long polling.
 
 The SQLite database uses WAL mode. Backups should use SQLite's `.backup`

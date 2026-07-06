@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-07-06
+
+### Telegram Task Commands
+- Added Telegram `/addtask <title> [--due DD/MM/YYYY]` for direct task creation.
+- Stored date-only due dates as local end-of-day deadlines converted to UTC.
+- Required `TELEGRAM_ALLOWED_USER_IDS` before any Telegram command can run.
+- Kept database migrations as a startup/setup concern instead of running them inside each Telegram command handler.
+- Updated README and homelab setup notes for the new command and authorization behavior.
+
+### Verification
+- `python -B -m unittest discover -s tests` passed.
+- `python -m compileall src tests` passed when bytecode cache output was redirected with `PYTHONPYCACHEPREFIX`.
+- `python -m pytest` could not run because `pytest` is not installed in this environment.
+
 ## 2026-07-02
 
 ### Phase 1 Core Task Foundation
