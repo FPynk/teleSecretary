@@ -1,0 +1,78 @@
+name: CI/CD (Homelab Build + Tailscale OAuth)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Compile source and tests
+        run: python -m compileall src tests
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Connect to tailnet via OAuth
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:github-cd
+          use-cache: "true"
+
+      - name: Sanity check Tailscale reachability
+        run: |
+          tailscale ping --timeout=15s --until-direct=false -c 3 fpynkhomelab || tailscale ping --timeout=15s --until-direct=false -c 3 "${{ secrets.HOMELAB_SSH_HOST }}"
+
+      - name: Deploy via Tailscale SSH
+        run: |
+          tailscale ssh fpynk@fpynkhomelab -- '
+            set -Eeuo pipefail
+
+            cd /srv/apps/teleSecretary
+
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+
+            docker compose build app
+
+            mkdir -p data/backups
+            if [ -f data/secretary.sqlite3 ]; then
+              backup_timestamp="$(date -u +%Y%m%d-%H%M%S)"
+              sqlite3 data/secretary.sqlite3 ".backup data/backups/predeploy-${backup_timestamp}.sqlite3"
+            else
+              echo "No existing database found; skipping pre-deploy backup."
+            fi
+
+            docker compose stop app || true
+            docker compose run --rm --no-deps app python -m tele_secretary migrate
+            docker compose up -d --force-recreate
+            docker compose exec -T app python -m tele_secretary healthcheck
+            docker compose ps
+          '

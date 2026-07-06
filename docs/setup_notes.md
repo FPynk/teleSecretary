@@ -87,7 +87,9 @@ Use this update flow after the first setup:
 ```bash
 cd /srv/apps/teleSecretary
 git pull --ff-only
-docker compose up -d --build
+docker compose build app
+docker compose run --rm --no-deps app python -m tele_secretary migrate
+docker compose up -d
 ```
 
 Local runtime files should stay untracked. The repository already ignores:
@@ -155,7 +157,7 @@ Build the image:
 
 ```bash
 cd /srv/apps/teleSecretary
-docker compose build
+docker compose build app
 ```
 
 Apply database migrations:
@@ -395,19 +397,20 @@ sqlite3 -header -column /srv/apps/teleSecretary/data/secretary.sqlite3 "SELECT n
 
 ## 9. Backups
 
-Backups are handled by root cron. Root cron avoids permission issues when
-creating backups and pruning old files.
+Backups are handled by the normal user crontab. This keeps TeleSecretary's
+scheduled jobs in the same place as the other homelab app cron jobs.
 
 Create the backup directory:
 
 ```bash
 sudo mkdir -p /srv/apps/teleSecretary/data/backups
+sudo chown -R "$USER":"$USER" /srv/apps/teleSecretary/data/backups
 ```
 
 Manually create a backup:
 
 ```bash
-sudo sqlite3 /srv/apps/teleSecretary/data/secretary.sqlite3 ".backup '/srv/apps/teleSecretary/data/backups/manual-$(date -u +%Y%m%d-%H%M%S).sqlite3'"
+sqlite3 /srv/apps/teleSecretary/data/secretary.sqlite3 ".backup '/srv/apps/teleSecretary/data/backups/manual-$(date -u +%Y%m%d-%H%M%S).sqlite3'"
 ```
 
 List recent backups:
@@ -416,10 +419,10 @@ List recent backups:
 ls -lt /srv/apps/teleSecretary/data/backups | head
 ```
 
-Edit root's crontab:
+Append the job to your user crontab:
 
 ```bash
-sudo crontab -e
+crontab -e
 ```
 
 Add this daily backup and pruning job:
@@ -430,16 +433,16 @@ Add this daily backup and pruning job:
 
 Meaning:
 
-- Every day at 03:05 local cron time, root runs the backup.
+- Every day at 03:05 local cron time, your user runs the backup.
 - The backup filename timestamp is UTC.
 - SQLite's `.backup` command safely copies the live WAL-mode database.
 - Backups are written to `/srv/apps/teleSecretary/data/backups`.
 - Backups older than 30 days are deleted.
 
-Check root cron:
+Check your user crontab:
 
 ```bash
-sudo crontab -l
+crontab -l
 ```
 
 Check backup folder ownership and files:
@@ -522,7 +525,9 @@ Pull the latest code and redeploy:
 ```bash
 cd /srv/apps/teleSecretary
 git pull --ff-only
-docker compose up -d --build
+docker compose build app
+docker compose run --rm --no-deps app python -m tele_secretary migrate
+docker compose up -d
 ```
 
 Run migrations manually:
