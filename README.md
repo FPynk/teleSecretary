@@ -13,18 +13,18 @@ data model and a first task-list Telegram command:
 - foundation tables for users, reference sequences, and health checks
 - Phase 1 task/note/category/tag tables and task services
 - application-level health and help actions
-- Telegram long-polling bootstrap with `/ping`, `/help`, and `/list`
+- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, and `/addtask`
 - Docker and Docker Compose setup
 - unit tests for the foundation pieces
 
-Task mutation commands, reminders, natural-language parsing, and LLM integration
-are later phases.
+Reminders, natural-language parsing, and LLM integration are later phases.
 
 ## Telegram Commands
 
 - `/ping` - check that TeleSecretary is awake
 - `/help` - show the command list
 - `/list` - show active tasks
+- `/addtask <title> [--due DD/MM/YYYY]` - add a task
 
 ## Local Setup
 
@@ -39,8 +39,7 @@ cp .env.example .env
 
 Fill in `TELEGRAM_BOT_TOKEN` in `.env` before starting the bot. Set
 `TELEGRAM_ALLOWED_USER_IDS` to a comma-separated list of Telegram user IDs to
-restrict access. If it is empty, the Phase 0 bot allows any Telegram user who can
-message it.
+restrict access. If it is empty, Telegram commands are disabled.
 
 Task commands are currently single-user. Use your Telegram ID in
 `TELEGRAM_ALLOWED_USER_IDS`; the first ID in that list is treated as the task

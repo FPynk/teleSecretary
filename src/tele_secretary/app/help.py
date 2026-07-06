@@ -9,6 +9,7 @@ def get_help_text() -> str:
             "Commands:",
             "- /ping - check that TeleSecretary is awake",
             "- /list - show active tasks",
+            "- /addtask <title> [--due DD/MM/YYYY] - add a task",
             "- /help - show this command list",
             "",
             "More task commands are coming in Phase 2.",

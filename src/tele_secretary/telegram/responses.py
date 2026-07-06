@@ -24,8 +24,19 @@ def build_task_list_response(tasks: tuple[TaskRecord, ...]) -> str:
     return "\n".join(lines)
 
 
+def build_task_created_response(task: TaskRecord, due_date_text: str | None = None) -> str:
+    lines = [f"Task added: {task.title}"]
+    if due_date_text is not None:
+        lines.append(f"Due: {due_date_text}")
+    return "\n".join(lines)
+
+
+def build_addtask_usage_response() -> str:
+    return "Usage: /addtask <title> [--due DD/MM/YYYY]"
+
+
 def build_task_owner_not_configured_response() -> str:
-    return "Set TELEGRAM_ALLOWED_USER_IDS to your Telegram user ID before using task commands."
+    return "Set TELEGRAM_ALLOWED_USER_IDS to your Telegram user ID before using TeleSecretary."
 
 
 def build_unauthorized_response() -> str:
