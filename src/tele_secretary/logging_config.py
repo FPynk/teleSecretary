@@ -23,9 +23,7 @@ def configure_logging(log_dir: Path, log_level: str) -> None:
 
     root = logging.getLogger()
     root.setLevel(level)
-    for handler in root.handlers[:]:
-        root.removeHandler(handler)
-        handler.close()
+    shutdown_logging()
 
     formatter = TelegramTokenRedactingFormatter(
         fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
@@ -45,3 +43,10 @@ def configure_logging(log_dir: Path, log_level: str) -> None:
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def shutdown_logging() -> None:
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()

@@ -9,9 +9,10 @@
 - Added `/show <task_ref>` with localized task details and clear invalid/not-found responses.
 - Added migration, reference ownership, parser, handler, and detail-formatting coverage.
 - Added atomic `/edit` support for task fields, categories, tags, clearing optional values, localized dates, quoted whitespace, and mobile curly quotes.
+- Fixed flaky CI logging cleanup by detaching temporary handlers before their directories are removed.
 
 ### Verification
-- `python -B -m unittest discover -s tests` passed all 54 tests.
+- `python -B -m unittest discover -s tests` passed all 55 tests.
 
 ## 2026-07-06
 
