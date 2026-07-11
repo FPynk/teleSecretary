@@ -22,6 +22,7 @@ from tele_secretary.telegram.bot import (
     parse_addtask_command_text,
     parse_show_command_text,
 )
+from tele_secretary.telegram.responses import build_help_response
 
 
 class FakeMessage:
@@ -52,7 +53,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.build_config(Path(temp_dir), allowed_user_ids=())
 
-            update = self.build_update(telegram_user_id=1001, text="/help")
+            update = self.build_update(telegram_user_id=1001, text="/help edit")
             await _help_handler(config)(update, SimpleNamespace())
 
         self.assertEqual(
@@ -61,6 +62,45 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
                 "Set TELEGRAM_ALLOWED_USER_IDS to your Telegram user ID before using TeleSecretary."
             ],
         )
+
+    async def test_help_edit_accepts_case_and_bot_username_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            expected_response = build_help_response("edit")
+
+            updates = (
+                self.build_update(telegram_user_id=1001, text="/help edit"),
+                self.build_update(telegram_user_id=1001, text="/help EDIT"),
+                self.build_update(
+                    telegram_user_id=1001,
+                    text="/help@TeleSecretaryBot edit",
+                ),
+            )
+            for update in updates:
+                await _help_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(
+            [update.message.replies for update in updates],
+            [[expected_response], [expected_response], [expected_response]],
+        )
+
+    async def test_help_command_rejects_unknown_and_multiple_topics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            unknown_update = self.build_update(
+                telegram_user_id=1001,
+                text="/help done",
+            )
+            multiple_update = self.build_update(
+                telegram_user_id=1001,
+                text="/help edit extra",
+            )
+
+            await _help_handler(config)(unknown_update, SimpleNamespace())
+            await _help_handler(config)(multiple_update, SimpleNamespace())
+
+        self.assertIn("Unknown help topic: done", unknown_update.message.replies[0])
+        self.assertIn("Use one help topic at a time", multiple_update.message.replies[0])
 
     async def test_addtask_command_creates_task_with_title_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

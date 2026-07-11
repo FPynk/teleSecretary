@@ -13,8 +13,8 @@ def build_ping_response() -> str:
     return "pong"
 
 
-def build_help_response() -> str:
-    return get_help_text()
+def build_help_response(topic: str | None = None) -> str:
+    return get_help_text(topic)
 
 
 def build_task_list_response(tasks: tuple[TaskRecord, ...]) -> str:
@@ -50,6 +50,7 @@ def build_edit_usage_response(error_message: str | None = None) -> str:
         [
             "Usage: /edit T<number> -field value [-field value ...]",
             'Example: /edit T1 -title "New title" -urgency high',
+            "Detailed help: /help edit",
         ]
     )
     return "\n".join(lines)

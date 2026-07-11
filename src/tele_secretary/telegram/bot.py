@@ -108,7 +108,11 @@ def _help_handler(config: AppConfig) -> Any:
         del context
         if not await _ensure_authorized(update, config):
             return
-        await update.message.reply_text(build_help_response())
+        if update.message is None:
+            return
+        command_parts = (update.message.text or "").strip().split()
+        topic = None if len(command_parts) == 1 else " ".join(command_parts[1:])
+        await update.message.reply_text(build_help_response(topic))
 
     return handler
 
@@ -223,6 +227,11 @@ def _edit_handler(config: AppConfig) -> Any:
         if not await _ensure_authorized(update, config):
             return
         if update.message is None or update.effective_user is None:
+            return
+
+        command_parts = (update.message.text or "").strip().split()
+        if len(command_parts) == 2 and command_parts[1].lower() == "-help":
+            await update.message.reply_text(build_help_response("edit"))
             return
 
         try:

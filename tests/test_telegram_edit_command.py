@@ -17,6 +17,7 @@ from tele_secretary.telegram.edit_command import (
     EditTaskCommandParseError,
     parse_edit_task_command_text,
 )
+from tele_secretary.telegram.responses import build_help_response
 
 
 class FakeMessage:
@@ -93,6 +94,15 @@ class EditTaskCommandParserTests(unittest.TestCase):
 
 
 class TelegramEditCommandTests(unittest.IsolatedAsyncioTestCase):
+    async def test_edit_help_alias_returns_verbose_help_without_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            update = self.build_update("/edit -help")
+
+            await _edit_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(update.message.replies, [build_help_response("edit")])
+
     async def test_edit_command_updates_multiple_fields_and_tags(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.build_config(Path(temp_dir))
@@ -212,7 +222,7 @@ class TelegramEditCommandTests(unittest.IsolatedAsyncioTestCase):
                 Path(temp_dir),
                 allowed_user_ids=(2002,),
             )
-            unauthorized_update = self.build_update("/edit T1 -title Nope")
+            unauthorized_update = self.build_update("/edit -help")
             await _edit_handler(unauthorized_config)(
                 unauthorized_update,
                 SimpleNamespace(),

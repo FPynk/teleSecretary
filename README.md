@@ -24,6 +24,7 @@ Reminders, natural-language parsing, and LLM integration are later phases.
 
 - `/ping` - check that TeleSecretary is awake
 - `/help` - show the command list
+- `/help edit` - show verbose `/edit` instructions (`/edit -help` is an alias)
 - `/list` - show active tasks
 - `/addtask <title> [-due DD/MM/YYYY]` - add a task
 - `/show T<number>` - show full task details
