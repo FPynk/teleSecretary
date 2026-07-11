@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,7 +18,9 @@ from tele_secretary.telegram.bot import (
     _help_handler,
     _list_handler,
     _ping_handler,
+    _show_handler,
     parse_addtask_command_text,
+    parse_show_command_text,
 )
 
 
@@ -79,7 +82,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
                 )
                 tasks = list_active_tasks(conn, user_id=user_id)
 
-        self.assertEqual(update.message.replies, ["Task added: Buy milk"])
+        self.assertEqual(update.message.replies, ["Task added: T1 — Buy milk"])
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0].title, "Buy milk")
         self.assertIsNone(tasks[0].deadline_at)
@@ -109,7 +112,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             update.message.replies,
-            ["Task added: Pay electricity bill\nDue: 12/07/2026"],
+            ["Task added: T1 — Pay electricity bill\nDue: 12/07/2026"],
         )
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0].title, "Pay electricity bill")
@@ -225,7 +228,96 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
             update = self.build_update(telegram_user_id=1001)
             await _list_handler(config)(update, SimpleNamespace())
 
-        self.assertEqual(update.message.replies, ["Active tasks:\n1. Email professor"])
+        self.assertEqual(update.message.replies, ["Active tasks:\nT1 — Email professor"])
+
+    async def test_show_command_returns_full_localized_task_details(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+                user_id = get_or_create_telegram_user_id(
+                    conn,
+                    telegram_user_id=1001,
+                    timezone=config.user_timezone,
+                )
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO categories (id, user_id, name, created_at)
+                        VALUES ('cat-school', ?, 'school', '2026-07-01T00:00:00+00:00')
+                        """,
+                        (user_id,),
+                    )
+                create_task(
+                    conn,
+                    user_id=user_id,
+                    title="Email professor",
+                    source="manual_entry",
+                    description="Ask about the syllabus.",
+                    category_id="cat-school",
+                    deadline_at=datetime(2026, 7, 10, 22, 0, tzinfo=timezone.utc),
+                    deadline_type="soft",
+                    planned_start_at=datetime(2026, 7, 8, 15, 0, tzinfo=timezone.utc),
+                    planned_end_at=datetime(2026, 7, 8, 16, 0, tzinfo=timezone.utc),
+                    estimated_minutes=30,
+                    urgency="high",
+                )
+
+            update = self.build_update(telegram_user_id=1001, text="/show T1")
+            await _show_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(
+            update.message.replies,
+            [
+                "T1 — Email professor\n"
+                "Status: active\n"
+                "Description: Ask about the syllabus.\n"
+                "Category: school\n"
+                "Deadline: Fri Jul 10, 2026 at 5:00 PM (soft)\n"
+                "Planned window: Wed Jul 8, 2026 at 10:00 AM — "
+                "Wed Jul 8, 2026 at 11:00 AM\n"
+                "Urgency: high\n"
+                "Estimate: 30 minutes\n"
+                "Tags: None\n"
+                "Reminders: None"
+            ],
+        )
+
+    async def test_show_command_handles_invalid_and_missing_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+
+            invalid_update = self.build_update(telegram_user_id=1001, text="/show 1")
+            await _show_handler(config)(invalid_update, SimpleNamespace())
+            missing_update = self.build_update(telegram_user_id=1001, text="/show t99")
+            await _show_handler(config)(missing_update, SimpleNamespace())
+
+        self.assertEqual(invalid_update.message.replies, ["Usage: /show T<number>"])
+        self.assertEqual(
+            missing_update.message.replies,
+            ["Task T99 was not found. Use /list to see active task refs."],
+        )
+
+    async def test_show_command_respects_authorization(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir), allowed_user_ids=(2002,))
+
+            update = self.build_update(telegram_user_id=1001, text="/show T1")
+            await _show_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(
+            update.message.replies,
+            ["This Telegram account is not authorized to use TeleSecretary."],
+        )
+
+    def test_show_parser_accepts_refs_and_rejects_extra_or_invalid_arguments(self) -> None:
+        self.assertEqual(parse_show_command_text("/show T12"), "T12")
+        self.assertEqual(parse_show_command_text("/show@TeleSecretaryBot t7"), "T7")
+        self.assertIsNone(parse_show_command_text("/show"))
+        self.assertIsNone(parse_show_command_text("/show T0"))
+        self.assertIsNone(parse_show_command_text("/show T1 extra"))
 
     async def test_list_command_has_empty_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-11
+
+### Telegram Task Details
+- Added persistent per-user task refs and backfilled refs for existing tasks.
+- Updated `/list` and `/addtask` confirmations to expose stable refs such as `T1`.
+- Added `/show <task_ref>` with localized task details and clear invalid/not-found responses.
+- Added migration, reference ownership, parser, handler, and detail-formatting coverage.
+
+### Verification
+- `python -B -m unittest discover -s tests` passed all 46 tests.
+
 ## 2026-07-06
 
 ### Telegram Task Commands

@@ -15,6 +15,7 @@ from tele_secretary.app.tasks import (
     create_note,
     create_task,
     get_task_details,
+    get_task_details_by_ref,
     list_active_tasks,
     list_categories_and_tags,
     reopen_task,
@@ -41,6 +42,7 @@ class TaskServiceTests(unittest.TestCase):
             active_tasks = list_active_tasks(conn, user_id="user-a")
 
         self.assertEqual(task.title, "Email professor")
+        self.assertEqual(task.ref, "T1")
         self.assertEqual(task.status, "active")
         self.assertEqual(task.parse_status, "not_applicable")
         self.assertIsNone(task.completed_at)
@@ -48,6 +50,57 @@ class TaskServiceTests(unittest.TestCase):
         self.assertEqual(active_tasks, (task,))
         self.assertTrue(task.created_at.endswith("+00:00"))
         self.assertTrue(task.updated_at.endswith("+00:00"))
+
+    def test_task_refs_are_persisted_and_scoped_to_the_owner(self) -> None:
+        with self.open_seeded_database() as conn:
+            first_task = create_task(
+                conn,
+                user_id="user-a",
+                title="First task",
+                source="manual_entry",
+            )
+            second_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Second task",
+                source="manual_entry",
+            )
+            other_user_task = create_task(
+                conn,
+                user_id="user-b",
+                title="Other user's task",
+                source="manual_entry",
+            )
+            create_task(
+                conn,
+                user_id="user-b",
+                title="Other user's second task",
+                source="manual_entry",
+            )
+            other_user_third_task = create_task(
+                conn,
+                user_id="user-b",
+                title="Other user's third task",
+                source="manual_entry",
+            )
+
+            fetched_task = get_task_details_by_ref(
+                conn,
+                user_id="user-a",
+                task_ref="t2",
+            )
+            with self.assertRaises(TaskNotFoundError):
+                get_task_details_by_ref(
+                    conn,
+                    user_id="user-a",
+                    task_ref=other_user_third_task.ref,
+                )
+
+        self.assertEqual(first_task.ref, "T1")
+        self.assertEqual(second_task.ref, "T2")
+        self.assertEqual(other_user_task.ref, "T1")
+        self.assertEqual(other_user_third_task.ref, "T3")
+        self.assertEqual(fetched_task.id, second_task.id)
 
     def test_create_task_with_optional_fields_category_and_tags(self) -> None:
         deadline = datetime(2026, 7, 10, 22, 0, tzinfo=timezone.utc)

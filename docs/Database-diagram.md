@@ -66,6 +66,12 @@ erDiagram
         TEXT completed_at
     }
 
+    task_refs {
+        TEXT task_id PK, FK
+        TEXT user_id FK
+        TEXT task_ref
+    }
+
     note_items {
         TEXT item_id PK, FK
         TEXT body
@@ -88,12 +94,14 @@ erDiagram
     users ||--o{ items : owns
     users ||--o{ categories : owns
     users ||--o{ tags : owns
+    users ||--o{ task_refs : owns
 
     items ||--o| task_items : extends_task
     items ||--o| note_items : extends_note
 
     categories ||--o{ task_items : categorizes
     task_items ||--o{ completion_logs : records
+    task_items ||--|| task_refs : identified_by
 
     items ||--o{ item_tags : has
     tags ||--o{ item_tags : labels
@@ -109,6 +117,12 @@ erDiagram
   `task_items.category_id` to `NULL`.
 - `item_tags` is the many-to-many join table between `items` and `tags`.
 - `completion_logs` only attach to task rows through `task_items`.
+- `task_refs` gives every task a stable, human-friendly reference such as
+  `T12` while the task continues to use its UUID-backed `items.id` internally.
+- `task_refs.user_id` must match the owner of the referenced task. The database
+  enforces this with `trg_task_refs_require_matching_owner`.
+- `ref_sequences` stores the next task-reference number per user; `task_refs`
+  stores the reference assigned to each task.
 - `health_checks` is operational state and is not tied to a user.
 
 ## Important Constraints
@@ -122,3 +136,13 @@ erDiagram
 - `task_items.deadline_type` is `hard`, `soft`, or `NULL`.
 - `task_items.urgency` is `low`, `medium`, `high`, `top_priority`, or `NULL`.
 - `completion_logs.event_type` is either `completed` or `reopened`.
+- `task_refs.task_id` is unique, so each task has one persistent task ref.
+- `task_refs.task_ref` is unique per user through `(user_id, task_ref)`; separate
+  users may each have a task named `T1`.
+
+## Migration Notes
+
+- `0001_foundation.sql` creates users, reference sequences, and health checks.
+- `0002_phase1_items.sql` creates the shared item model and task/note tables.
+- `0003_task_refs.sql` creates `task_refs`, assigns refs to existing tasks in a
+  stable creation order, and advances each user's task-reference sequence.

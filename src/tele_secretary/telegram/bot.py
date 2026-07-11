@@ -9,7 +9,12 @@ import re
 from typing import Any
 
 from tele_secretary.config import AppConfig
-from tele_secretary.app.tasks import create_task, list_active_tasks
+from tele_secretary.app.tasks import (
+    TaskNotFoundError,
+    create_task,
+    get_task_details_by_ref,
+    list_active_tasks,
+)
 from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.persistence.connection import connect
 from tele_secretary.persistence.migrations import apply_migrations
@@ -18,7 +23,10 @@ from tele_secretary.telegram.responses import (
     build_addtask_usage_response,
     build_help_response,
     build_ping_response,
+    build_show_usage_response,
     build_task_created_response,
+    build_task_details_response,
+    build_task_not_found_response,
     build_task_owner_not_configured_response,
     build_task_list_response,
     build_unauthorized_response,
@@ -27,6 +35,7 @@ from tele_secretary.telegram.responses import (
 LOGGER = logging.getLogger(__name__)
 ADD_TASK_DUE_DATE_PATTERN = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 ADD_TASK_DUE_FLAG_PATTERN = re.compile(r"(?<!\S)--due(?!\S)")
+TASK_REF_PATTERN = re.compile(r"T[1-9]\d*", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -69,6 +78,7 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("help", _help_handler(config)))
     application.add_handler(CommandHandler("list", _list_handler(config)))
     application.add_handler(CommandHandler("addtask", _addtask_handler(config)))
+    application.add_handler(CommandHandler("show", _show_handler(config)))
     return application
 
 
@@ -155,6 +165,52 @@ def _addtask_handler(config: AppConfig) -> Any:
         )
 
     return handler
+
+
+def _show_handler(config: AppConfig) -> Any:
+    async def handler(update: Any, context: Any) -> None:
+        del context
+        if not await _ensure_authorized(update, config):
+            return
+        if update.message is None or update.effective_user is None:
+            return
+
+        task_ref = parse_show_command_text(update.message.text or "")
+        if task_ref is None:
+            await update.message.reply_text(build_show_usage_response())
+            return
+
+        conn = connect(config.db_path)
+        try:
+            user_id = get_or_create_telegram_user_id(
+                conn,
+                telegram_user_id=config.telegram_allowed_user_ids[0],
+                timezone=config.user_timezone,
+            )
+            try:
+                task = get_task_details_by_ref(
+                    conn,
+                    user_id=user_id,
+                    task_ref=task_ref,
+                )
+            except TaskNotFoundError:
+                await update.message.reply_text(build_task_not_found_response(task_ref))
+                return
+        finally:
+            conn.close()
+
+        await update.message.reply_text(
+            build_task_details_response(task, config.user_timezone)
+        )
+
+    return handler
+
+
+def parse_show_command_text(command_text: str) -> str | None:
+    command_parts = command_text.strip().split()
+    if len(command_parts) != 2 or TASK_REF_PATTERN.fullmatch(command_parts[1]) is None:
+        return None
+    return command_parts[1].upper()
 
 
 def parse_addtask_command_text(command_text: str, timezone_name: str) -> ParsedAddTaskCommand:
