@@ -196,7 +196,7 @@ In Telegram, send:
 /ping
 /help
 /list
-/addtask Test homelab setup --due 31/12/2026
+/addtask Test homelab setup -due 31/12/2026
 ```
 
 ---

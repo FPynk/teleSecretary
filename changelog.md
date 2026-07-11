@@ -5,6 +5,7 @@
 ### Telegram Task Details
 - Added persistent per-user task refs and backfilled refs for existing tasks.
 - Updated `/list` and `/addtask` confirmations to expose stable refs such as `T1`.
+- Changed the optional `/addtask` deadline flag from `--due` to phone-friendly `-due`.
 - Added `/show <task_ref>` with localized task details and clear invalid/not-found responses.
 - Added migration, reference ownership, parser, handler, and detail-formatting coverage.
 

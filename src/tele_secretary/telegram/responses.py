@@ -35,7 +35,7 @@ def build_task_created_response(task: TaskRecord, due_date_text: str | None = No
 
 
 def build_addtask_usage_response() -> str:
-    return "Usage: /addtask <title> [--due DD/MM/YYYY]"
+    return "Usage: /addtask <title> [-due DD/MM/YYYY]"
 
 
 def build_show_usage_response() -> str:

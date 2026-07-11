@@ -34,7 +34,8 @@ from tele_secretary.telegram.responses import (
 
 LOGGER = logging.getLogger(__name__)
 ADD_TASK_DUE_DATE_PATTERN = re.compile(r"^\d{2}/\d{2}/\d{4}$")
-ADD_TASK_DUE_FLAG_PATTERN = re.compile(r"(?<!\S)--due(?!\S)")
+ADD_TASK_DUE_FLAG_PATTERN = re.compile(r"(?<!\S)-due(?!\S)")
+ADD_TASK_DUE_LIKE_PATTERN = re.compile(r"(?<!\S)-{1,2}due")
 TASK_REF_PATTERN = re.compile(r"T[1-9]\d*", re.IGNORECASE)
 
 
@@ -224,7 +225,7 @@ def parse_addtask_command_text(command_text: str, timezone_name: str) -> ParsedA
 
     due_flag_matches = list(ADD_TASK_DUE_FLAG_PATTERN.finditer(task_text))
     if not due_flag_matches:
-        if "--due" in task_text:
+        if ADD_TASK_DUE_LIKE_PATTERN.search(task_text) is not None:
             raise AddTaskCommandParseError("Add task command has an invalid due flag.")
         return ParsedAddTaskCommand(title=task_text, deadline_at=None, due_date_text=None)
     if len(due_flag_matches) != 1:

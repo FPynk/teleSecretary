@@ -98,7 +98,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
             update = self.build_update(
                 telegram_user_id=1001,
-                text="/addtask Pay electricity bill --due 12/07/2026",
+                text="/addtask Pay electricity bill -due 12/07/2026",
             )
             await _addtask_handler(config)(update, SimpleNamespace())
 
@@ -138,7 +138,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             update.message.replies,
-            ["Usage: /addtask <title> [--due DD/MM/YYYY]"],
+            ["Usage: /addtask <title> [-due DD/MM/YYYY]"],
         )
         self.assertEqual(tasks, ())
 
@@ -170,7 +170,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
     def test_addtask_parser_accepts_bot_username_suffix(self) -> None:
         parsed_command = parse_addtask_command_text(
-            "/addtask@TeleSecretaryBot Renew passport --due 31/08/2026",
+            "/addtask@TeleSecretaryBot Renew passport -due 31/08/2026",
             "America/Chicago",
         )
 
@@ -183,12 +183,13 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
     def test_addtask_parser_rejects_malformed_due_flag(self) -> None:
         invalid_commands = (
-            "/addtask --due 12/07/2026",
-            "/addtask Pay bill --due",
-            "/addtask Pay bill --due 2026-07-12",
-            "/addtask Pay bill --due 31/02/2026",
-            "/addtask Pay bill --due 12/07/2026 --due 13/07/2026",
-            "/addtask Pay bill --dueish 12/07/2026",
+            "/addtask -due 12/07/2026",
+            "/addtask Pay bill -due",
+            "/addtask Pay bill -due 2026-07-12",
+            "/addtask Pay bill -due 31/02/2026",
+            "/addtask Pay bill -due 12/07/2026 -due 13/07/2026",
+            "/addtask Pay bill -dueish 12/07/2026",
+            "/addtask Pay bill --due 12/07/2026",
         )
 
         for invalid_command in invalid_commands:
