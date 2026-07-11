@@ -11,6 +11,7 @@ def get_help_text() -> str:
             "- /list - show active tasks",
             "- /addtask <title> [-due DD/MM/YYYY] - add a task",
             "- /show T<number> - show full task details",
+            "- /edit T<number> -field value [...] - edit task fields",
             "- /help - show this command list",
             "",
             "More task commands are coming in Phase 2.",

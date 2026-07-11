@@ -11,7 +11,9 @@ from typing import Any
 from tele_secretary.config import AppConfig
 from tele_secretary.app.tasks import (
     TaskNotFoundError,
+    TaskValidationError,
     create_task,
+    edit_task_by_ref,
     get_task_details_by_ref,
     list_active_tasks,
 )
@@ -19,14 +21,21 @@ from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.persistence.connection import connect
 from tele_secretary.persistence.migrations import apply_migrations
 from tele_secretary.time_utils import local_to_utc
+from tele_secretary.telegram.edit_command import (
+    EditTaskCommandParseError,
+    parse_edit_task_command_text,
+)
 from tele_secretary.telegram.responses import (
     build_addtask_usage_response,
+    build_edit_error_response,
+    build_edit_usage_response,
     build_help_response,
     build_ping_response,
     build_show_usage_response,
     build_task_created_response,
     build_task_details_response,
     build_task_not_found_response,
+    build_task_updated_response,
     build_task_owner_not_configured_response,
     build_task_list_response,
     build_unauthorized_response,
@@ -80,6 +89,7 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("list", _list_handler(config)))
     application.add_handler(CommandHandler("addtask", _addtask_handler(config)))
     application.add_handler(CommandHandler("show", _show_handler(config)))
+    application.add_handler(CommandHandler("edit", _edit_handler(config)))
     return application
 
 
@@ -202,6 +212,65 @@ def _show_handler(config: AppConfig) -> Any:
 
         await update.message.reply_text(
             build_task_details_response(task, config.user_timezone)
+        )
+
+    return handler
+
+
+def _edit_handler(config: AppConfig) -> Any:
+    async def handler(update: Any, context: Any) -> None:
+        del context
+        if not await _ensure_authorized(update, config):
+            return
+        if update.message is None or update.effective_user is None:
+            return
+
+        try:
+            parsed_command = parse_edit_task_command_text(
+                update.message.text or "",
+                config.user_timezone,
+            )
+        except EditTaskCommandParseError as exc:
+            await update.message.reply_text(build_edit_usage_response(str(exc)))
+            return
+
+        conn = connect(config.db_path)
+        try:
+            user_id = get_or_create_telegram_user_id(
+                conn,
+                telegram_user_id=config.telegram_allowed_user_ids[0],
+                timezone=config.user_timezone,
+            )
+            try:
+                task = edit_task_by_ref(
+                    conn,
+                    user_id=user_id,
+                    task_ref=parsed_command.task_ref,
+                    source="telegram_command",
+                    task_field_updates=parsed_command.task_field_updates,
+                    category_was_provided=parsed_command.category_was_provided,
+                    category_name=parsed_command.category_name,
+                    add_tag_names=parsed_command.add_tag_names,
+                    remove_tag_names=parsed_command.remove_tag_names,
+                    clear_tags=parsed_command.clear_tags,
+                )
+            except TaskNotFoundError:
+                await update.message.reply_text(
+                    build_task_not_found_response(parsed_command.task_ref)
+                )
+                return
+            except TaskValidationError as exc:
+                await update.message.reply_text(build_edit_error_response(exc.message))
+                return
+        finally:
+            conn.close()
+
+        await update.message.reply_text(
+            build_task_updated_response(
+                task,
+                config.user_timezone,
+                parsed_command.changed_fields,
+            )
         )
 
     return handler

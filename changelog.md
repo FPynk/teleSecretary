@@ -8,9 +8,10 @@
 - Changed the optional `/addtask` deadline flag from `--due` to phone-friendly `-due`.
 - Added `/show <task_ref>` with localized task details and clear invalid/not-found responses.
 - Added migration, reference ownership, parser, handler, and detail-formatting coverage.
+- Added atomic `/edit` support for task fields, categories, tags, clearing optional values, localized dates, quoted whitespace, and mobile curly quotes.
 
 ### Verification
-- `python -B -m unittest discover -s tests` passed all 46 tests.
+- `python -B -m unittest discover -s tests` passed all 54 tests.
 
 ## 2026-07-06
 

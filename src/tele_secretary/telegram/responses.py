@@ -42,6 +42,23 @@ def build_show_usage_response() -> str:
     return "Usage: /show T<number>"
 
 
+def build_edit_usage_response(error_message: str | None = None) -> str:
+    lines = []
+    if error_message is not None:
+        lines.append(f"Could not edit task: {error_message}")
+    lines.extend(
+        [
+            "Usage: /edit T<number> -field value [-field value ...]",
+            'Example: /edit T1 -title "New title" -urgency high',
+        ]
+    )
+    return "\n".join(lines)
+
+
+def build_edit_error_response(error_message: str) -> str:
+    return f"Could not edit task: {error_message}"
+
+
 def build_task_not_found_response(task_ref: str) -> str:
     return f"Task {task_ref} was not found. Use /list to see active task refs."
 
@@ -74,6 +91,56 @@ def build_task_details_response(task: TaskRecord, timezone_name: str) -> str:
         f"Tags: {', '.join(tag.name for tag in task.tags) or 'None'}",
         "Reminders: None",
     ]
+    return "\n".join(lines)
+
+
+def build_task_updated_response(
+    task: TaskRecord,
+    timezone_name: str,
+    changed_fields: tuple[str, ...],
+) -> str:
+    lines = [f"Updated {task.ref} — {task.title}"]
+    for field_name in changed_fields:
+        if field_name == "title":
+            lines.append(f"Title: {task.title}")
+        elif field_name == "description":
+            lines.append(f"Description: {task.description or 'None'}")
+        elif field_name == "category":
+            lines.append(f"Category: {task.category_name or 'None'}")
+        elif field_name == "deadline":
+            deadline = _format_optional_datetime(task.deadline_at, timezone_name)
+            if deadline is not None and task.deadline_type is not None:
+                deadline = f"{deadline} ({task.deadline_type})"
+            lines.append(f"Deadline: {deadline or 'None'}")
+        elif field_name == "planned_window":
+            planned_start = _format_optional_datetime(
+                task.planned_start_at,
+                timezone_name,
+            )
+            planned_end = _format_optional_datetime(
+                task.planned_end_at,
+                timezone_name,
+            )
+            if planned_start is not None and planned_end is not None:
+                planned_window = f"{planned_start} — {planned_end}"
+            elif planned_start is not None:
+                planned_window = f"Starts {planned_start}"
+            elif planned_end is not None:
+                planned_window = f"Ends {planned_end}"
+            else:
+                planned_window = "None"
+            lines.append(f"Planned window: {planned_window}")
+        elif field_name == "estimate":
+            estimate = (
+                f"{task.estimated_minutes} minutes"
+                if task.estimated_minutes is not None
+                else "None"
+            )
+            lines.append(f"Estimate: {estimate}")
+        elif field_name == "urgency":
+            lines.append(f"Urgency: {task.urgency or 'None'}")
+        elif field_name == "tags":
+            lines.append(f"Tags: {', '.join(tag.name for tag in task.tags) or 'None'}")
     return "\n".join(lines)
 
 

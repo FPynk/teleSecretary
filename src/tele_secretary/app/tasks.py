@@ -285,6 +285,66 @@ def get_task_details_by_ref(
     return get_task_details(conn, user_id=user_id, task_id=row["task_id"])
 
 
+def edit_task_by_ref(
+    conn: Connection,
+    *,
+    user_id: str,
+    task_ref: str,
+    source: str,
+    task_field_updates: dict[str, Any],
+    category_was_provided: bool = False,
+    category_name: str | None = None,
+    add_tag_names: tuple[str, ...] = (),
+    remove_tag_names: tuple[str, ...] = (),
+    clear_tags: bool = False,
+) -> TaskRecord:
+    task = get_task_details_by_ref(conn, user_id=user_id, task_ref=task_ref)
+    resolved_updates = dict(task_field_updates)
+    vocabulary = None
+
+    if category_was_provided:
+        if category_name is None:
+            resolved_updates["category_id"] = None
+        else:
+            vocabulary = list_categories_and_tags(conn, user_id=user_id)
+            categories_by_name = {
+                category.name: category for category in vocabulary.categories
+            }
+            category = categories_by_name.get(category_name)
+            if category is None:
+                raise TaskValidationError(
+                    "unknown_category",
+                    f'Category "{category_name}" does not exist.',
+                )
+            resolved_updates["category_id"] = category.id
+
+    if clear_tags or add_tag_names or remove_tag_names:
+        if vocabulary is None:
+            vocabulary = list_categories_and_tags(conn, user_id=user_id)
+        tags_by_name = {tag.name: tag for tag in vocabulary.tags}
+        for tag_name in (*add_tag_names, *remove_tag_names):
+            if tag_name not in tags_by_name:
+                raise TaskValidationError(
+                    "unknown_tag",
+                    f'Tag "{tag_name}" does not exist.',
+                )
+
+        next_tag_ids = set() if clear_tags else {tag.id for tag in task.tags}
+        next_tag_ids.update(tags_by_name[tag_name].id for tag_name in add_tag_names)
+        next_tag_ids.difference_update(
+            tags_by_name[tag_name].id for tag_name in remove_tag_names
+        )
+        resolved_updates["tag_ids"] = tuple(sorted(next_tag_ids))
+
+    return update_task_fields(
+        conn,
+        user_id=user_id,
+        task_id=task.id,
+        source=source,
+        **resolved_updates,
+    )
+
+
 def list_active_tasks(
     conn: Connection,
     *,
