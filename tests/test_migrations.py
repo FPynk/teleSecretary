@@ -28,6 +28,18 @@ class MigrationTests(unittest.TestCase):
                         "SELECT name FROM sqlite_master WHERE type = 'table'"
                     ).fetchall()
                 }
+                item_columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(items)").fetchall()
+                }
+                task_item_columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(task_items)").fetchall()
+                }
+                note_item_columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(note_items)").fetchall()
+                }
 
         self.assertEqual(
             first.applied,
@@ -35,6 +47,7 @@ class MigrationTests(unittest.TestCase):
                 "0001_foundation.sql",
                 "0002_phase1_items.sql",
                 "0003_task_refs.sql",
+                "0004_subtype_public_references.sql",
             ),
         )
         self.assertEqual(second.applied, ())
@@ -44,6 +57,7 @@ class MigrationTests(unittest.TestCase):
                 "0001_foundation.sql",
                 "0002_phase1_items.sql",
                 "0003_task_refs.sql",
+                "0004_subtype_public_references.sql",
             ),
         )
         self.assertEqual(
@@ -52,6 +66,7 @@ class MigrationTests(unittest.TestCase):
                 "0001_foundation.sql",
                 "0002_phase1_items.sql",
                 "0003_task_refs.sql",
+                "0004_subtype_public_references.sql",
             ),
         )
         self.assertIn("users", tables)
@@ -64,9 +79,12 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("tags", tables)
         self.assertIn("item_tags", tables)
         self.assertIn("completion_logs", tables)
-        self.assertIn("task_refs", tables)
+        self.assertNotIn("task_refs", tables)
+        self.assertIn("pub_ref", item_columns)
+        self.assertNotIn("pub_ref", task_item_columns)
+        self.assertNotIn("pub_ref", note_item_columns)
 
-    def test_task_ref_migration_backfills_existing_tasks(self) -> None:
+    def test_item_reference_migration_moves_task_refs_and_backfills_notes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "secretary.sqlite3"
             with open_test_database(db_path) as conn:
@@ -100,22 +118,68 @@ class MigrationTests(unittest.TestCase):
                         """
                     )
                     conn.execute("INSERT INTO task_items (item_id) VALUES ('task-a')")
+                    conn.execute(
+                        """
+                        INSERT INTO items (
+                            id, user_id, item_type, title, status, source,
+                            parse_status, created_at, updated_at
+                        )
+                        VALUES (
+                            'note-a', 'user-a', 'note', 'Existing note', 'active',
+                            'manual_entry', 'not_applicable',
+                            '2026-07-02T00:00:00+00:00',
+                            '2026-07-02T00:00:00+00:00'
+                        )
+                        """
+                    )
+                    conn.execute("INSERT INTO note_items (item_id) VALUES ('note-a')")
+
+                migration_name, sql = iter_migration_sql()[2]
+                with conn:
+                    conn.executescript(sql)
+                    conn.execute(
+                        "INSERT INTO schema_migrations (version) VALUES (?)",
+                        (migration_name,),
+                    )
 
                 result = apply_migrations(conn)
                 task_ref = conn.execute(
-                    "SELECT task_ref FROM task_refs WHERE task_id = 'task-a'"
-                ).fetchone()["task_ref"]
-                next_value = conn.execute(
                     """
-                    SELECT next_value
-                    FROM ref_sequences
-                    WHERE user_id = 'user-a' AND ref_type = 'task'
+                    SELECT pub_ref
+                    FROM items
+                    WHERE id = 'task-a'
                     """
-                ).fetchone()["next_value"]
+                ).fetchone()["pub_ref"]
+                note_ref = conn.execute(
+                    """
+                    SELECT pub_ref
+                    FROM items
+                    WHERE id = 'note-a'
+                    """
+                ).fetchone()["pub_ref"]
+                next_values = {
+                    row["ref_type"]: row["next_value"]
+                    for row in conn.execute(
+                        """
+                        SELECT ref_type, next_value
+                        FROM ref_sequences
+                        WHERE user_id = 'user-a'
+                        """
+                    ).fetchall()
+                }
+                task_refs_table = conn.execute(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'table' AND name = 'task_refs'
+                    """
+                ).fetchone()
 
-        self.assertEqual(result.applied, ("0003_task_refs.sql",))
+        self.assertEqual(result.applied, ("0004_subtype_public_references.sql",))
         self.assertEqual(task_ref, "T1")
-        self.assertEqual(next_value, 2)
+        self.assertEqual(note_ref, "N1")
+        self.assertEqual(next_values, {"task": 2, "note": 2})
+        self.assertIsNone(task_refs_table)
 
 
 if __name__ == "__main__":

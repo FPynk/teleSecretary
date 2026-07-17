@@ -99,6 +99,7 @@ class TaskRecord:
 @dataclass(frozen=True)
 class NoteRecord:
     id: str
+    ref: str
     user_id: str
     title: str
     status: str
@@ -172,14 +173,16 @@ def create_task(
         conn.execute(
             """
             INSERT INTO items (
-                id, user_id, item_type, title, status, source, raw_input_text,
-                parse_status, parse_confidence, created_at, updated_at
+                id, user_id, item_type, pub_ref, title, status, source,
+                raw_input_text, parse_status, parse_confidence, created_at,
+                updated_at
             )
-            VALUES (?, ?, 'task', ?, 'active', ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, 'task', ?, ?, 'active', ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
                 user_id,
+                task_ref,
                 trimmed_title,
                 source,
                 raw_input_text,
@@ -209,10 +212,6 @@ def create_task(
                 urgency,
             ),
         )
-        conn.execute(
-            "INSERT INTO task_refs (task_id, user_id, task_ref) VALUES (?, ?, ?)",
-            (item_id, user_id, task_ref),
-        )
         _replace_item_tags(conn, item_id=item_id, tag_ids=unique_tag_ids)
 
     return get_task_details(conn, user_id=user_id, task_id=item_id)
@@ -229,7 +228,7 @@ def get_task_details(
         """
         SELECT
             items.id,
-            task_refs.task_ref,
+            items.pub_ref AS task_ref,
             items.user_id,
             items.title,
             items.status,
@@ -252,7 +251,6 @@ def get_task_details(
             task_items.completed_at
         FROM items
         JOIN task_items ON task_items.item_id = items.id
-        JOIN task_refs ON task_refs.task_id = items.id
         LEFT JOIN categories ON categories.id = task_items.category_id
         WHERE items.user_id = ?
             AND items.id = ?
@@ -274,15 +272,18 @@ def get_task_details_by_ref(
 ) -> TaskRecord:
     row = conn.execute(
         """
-        SELECT task_id
-        FROM task_refs
-        WHERE user_id = ? AND task_ref = ?
+        SELECT items.id
+        FROM items
+        WHERE items.user_id = ?
+            AND items.item_type = 'task'
+            AND items.pub_ref = ?
+            AND items.deleted_at IS NULL
         """,
         (user_id, task_ref.upper()),
     ).fetchone()
     if row is None:
         raise TaskNotFoundError("task_not_found", "Task was not found.")
-    return get_task_details(conn, user_id=user_id, task_id=row["task_id"])
+    return get_task_details(conn, user_id=user_id, task_id=row["id"])
 
 
 def edit_task_by_ref(
@@ -356,7 +357,7 @@ def list_active_tasks(
     sql = """
         SELECT
             items.id,
-            task_refs.task_ref,
+            items.pub_ref AS task_ref,
             items.user_id,
             items.title,
             items.status,
@@ -379,7 +380,6 @@ def list_active_tasks(
             task_items.completed_at
         FROM items
         JOIN task_items ON task_items.item_id = items.id
-        JOIN task_refs ON task_refs.task_id = items.id
         LEFT JOIN categories ON categories.id = task_items.category_id
         WHERE items.user_id = ?
             AND items.item_type = 'task'
@@ -669,19 +669,23 @@ def create_note(
     item_id = str(uuid4())
     now = utc_now_iso()
 
+    _require_user(conn, user_id)
+    note_ref = allocate_ref(conn, user_id=user_id, ref_type="note")
+
     with conn:
-        _require_user(conn, user_id)
         conn.execute(
             """
             INSERT INTO items (
-                id, user_id, item_type, title, status, source, raw_input_text,
-                parse_status, parse_confidence, created_at, updated_at
+                id, user_id, item_type, pub_ref, title, status, source,
+                raw_input_text, parse_status, parse_confidence, created_at,
+                updated_at
             )
-            VALUES (?, ?, 'note', ?, 'active', ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, 'note', ?, ?, 'active', ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
                 user_id,
+                note_ref,
                 trimmed_title,
                 source,
                 raw_input_text,
@@ -696,14 +700,15 @@ def create_note(
             (item_id, body),
         )
 
-    return _get_note(conn, user_id=user_id, note_id=item_id)
+    return get_note_details(conn, user_id=user_id, note_id=item_id)
 
 
-def _get_note(conn: Connection, *, user_id: str, note_id: str) -> NoteRecord:
+def get_note_details(conn: Connection, *, user_id: str, note_id: str) -> NoteRecord:
     row = conn.execute(
         """
         SELECT
             items.id,
+            items.pub_ref AS note_ref,
             items.user_id,
             items.title,
             items.status,
@@ -728,6 +733,7 @@ def _get_note(conn: Connection, *, user_id: str, note_id: str) -> NoteRecord:
         raise TaskNotFoundError("note_not_found", "Note was not found.")
     return NoteRecord(
         id=row["id"],
+        ref=row["note_ref"],
         user_id=row["user_id"],
         title=row["title"],
         status=row["status"],
@@ -740,6 +746,28 @@ def _get_note(conn: Connection, *, user_id: str, note_id: str) -> NoteRecord:
         deleted_at=row["deleted_at"],
         body=row["body"],
     )
+
+
+def get_note_details_by_ref(
+    conn: Connection,
+    *,
+    user_id: str,
+    note_ref: str,
+) -> NoteRecord:
+    row = conn.execute(
+        """
+        SELECT items.id
+        FROM items
+        WHERE items.user_id = ?
+            AND items.item_type = 'note'
+            AND items.pub_ref = ?
+            AND items.deleted_at IS NULL
+        """,
+        (user_id, note_ref.upper()),
+    ).fetchone()
+    if row is None:
+        raise TaskNotFoundError("note_not_found", "Note was not found.")
+    return get_note_details(conn, user_id=user_id, note_id=row["id"])
 
 
 def _task_from_row(conn: Connection, row: Any) -> TaskRecord:

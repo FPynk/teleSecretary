@@ -7,6 +7,7 @@ from sqlite3 import Connection
 
 REF_PREFIXES = {
     "task": "T",
+    "note": "N",
 }
 
 

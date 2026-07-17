@@ -35,7 +35,7 @@ class HealthAndRefsTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(count, 1)
 
-    def test_task_refs_are_sequential_per_user(self) -> None:
+    def test_public_refs_are_sequential_per_user_and_item_type(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "secretary.sqlite3"
             with open_test_database(db_path) as conn:
@@ -59,10 +59,14 @@ class HealthAndRefsTests(unittest.TestCase):
                 first = allocate_ref(conn, user_id="user-a", ref_type="task")
                 second = allocate_ref(conn, user_id="user-a", ref_type="task")
                 other_user = allocate_ref(conn, user_id="user-b", ref_type="task")
+                first_note = allocate_ref(conn, user_id="user-a", ref_type="note")
+                second_note = allocate_ref(conn, user_id="user-a", ref_type="note")
 
         self.assertEqual(first, "T1")
         self.assertEqual(second, "T2")
         self.assertEqual(other_user, "T1")
+        self.assertEqual(first_note, "N1")
+        self.assertEqual(second_note, "N2")
 
 
 if __name__ == "__main__":

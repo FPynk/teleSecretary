@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-07-17
+
+- Moved stable public references onto the shared `items.pub_ref` field and
+  removed the separate `task_refs` table through a forward migration.
+- Added owner-scoped `N<number>` references for notes and a shared lookup model
+  that future item types can extend with their own prefix.
+- Enforced owner-scoped uniqueness, item-type prefixes, and immutable public
+  references in SQLite.
+- Aligned task/note creation and lookup services, planning documents, schema
+  docs, and tests on the shared public-reference model and canonical ref format.
+- Added a complete table-and-column data dictionary to the database diagram.
+
 ## 2026-07-11
 
 ### Telegram Task Details

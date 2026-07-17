@@ -60,10 +60,11 @@ class Phase1SchemaTests(unittest.TestCase):
                                 conn.execute(
                                     """
                                     INSERT INTO items (
-                                        id, user_id, item_type, title, status, source,
-                                        parse_status, parse_confidence, created_at, updated_at
+                                        id, user_id, item_type, pub_ref, title, status,
+                                        source, parse_status, parse_confidence,
+                                        created_at, updated_at
                                     )
-                                    VALUES (?, 'user-a', ?, 'Example', ?, ?, ?, ?, ?, ?)
+                                    VALUES (?, 'user-a', ?, 'T1', 'Example', ?, ?, ?, ?, ?, ?)
                                     """,
                                     (
                                         item_id,
@@ -92,11 +93,11 @@ class Phase1SchemaTests(unittest.TestCase):
                     conn.execute(
                         """
                         INSERT INTO items (
-                            id, user_id, item_type, title, status, source,
-                            parse_status, created_at, updated_at
+                            id, user_id, item_type, pub_ref, title, status,
+                            source, parse_status, created_at, updated_at
                         )
                         VALUES (
-                            'note-1', 'user-a', 'note', 'A note', 'active',
+                            'note-1', 'user-a', 'note', 'N1', 'A note', 'active',
                             'manual_entry', 'not_applicable',
                             '2026-07-02T01:00:00+00:00',
                             '2026-07-02T01:00:00+00:00'
@@ -107,6 +108,138 @@ class Phase1SchemaTests(unittest.TestCase):
                 with self.assertRaises(sqlite3.IntegrityError):
                     with conn:
                         conn.execute("INSERT INTO task_items (item_id) VALUES ('note-1')")
+
+    def test_item_public_references_are_valid_stable_and_owner_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "secretary.sqlite3"
+            with open_test_database(db_path) as conn:
+                apply_migrations(conn)
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO users (id, telegram_user_id, timezone)
+                        VALUES
+                            ('user-a', 1001, 'America/Chicago'),
+                            ('user-b', 1002, 'America/Chicago')
+                        """
+                    )
+                    for item_id, user_id, item_type, pub_ref in (
+                        ("task-a", "user-a", "task", "T1"),
+                        ("task-b", "user-b", "task", "T1"),
+                        ("note-a", "user-a", "note", "N1"),
+                    ):
+                        conn.execute(
+                            """
+                            INSERT INTO items (
+                                id, user_id, item_type, pub_ref, title, status,
+                                source, parse_status, created_at, updated_at
+                            )
+                            VALUES (
+                                ?, ?, ?, ?, 'Example', 'active', 'manual_entry',
+                                'not_applicable',
+                                '2026-07-02T01:00:00+00:00',
+                                '2026-07-02T01:00:00+00:00'
+                            )
+                            """,
+                            (item_id, user_id, item_type, pub_ref),
+                        )
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO items (
+                                id, user_id, item_type, pub_ref, title, status,
+                                source, parse_status, created_at, updated_at
+                            )
+                            VALUES (
+                                'task-c', 'user-a', 'task', 'T1', 'Duplicate',
+                                'active', 'manual_entry', 'not_applicable',
+                                '2026-07-02T01:00:00+00:00',
+                                '2026-07-02T01:00:00+00:00'
+                            )
+                            """
+                        )
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO items (
+                                id, user_id, item_type, pub_ref, title, status,
+                                source, parse_status, created_at, updated_at
+                            )
+                            VALUES (
+                                'task-leading-zero', 'user-a', 'task', 'T01',
+                                'Leading zero', 'active', 'manual_entry',
+                                'not_applicable',
+                                '2026-07-02T01:00:00+00:00',
+                                '2026-07-02T01:00:00+00:00'
+                            )
+                            """
+                        )
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO items (
+                                id, user_id, item_type, title, status, source,
+                                parse_status, created_at, updated_at
+                            )
+                            VALUES (
+                                'note-without-ref', 'user-a', 'note',
+                                'Missing ref', 'active', 'manual_entry',
+                                'not_applicable',
+                                '2026-07-02T01:00:00+00:00',
+                                '2026-07-02T01:00:00+00:00'
+                            )
+                            """
+                        )
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO items (
+                                id, user_id, item_type, pub_ref, title, status,
+                                source, parse_status, created_at, updated_at
+                            )
+                            VALUES (
+                                'task-d', 'user-a', 'task', 'N2', 'Wrong prefix',
+                                'active', 'manual_entry', 'not_applicable',
+                                '2026-07-02T01:00:00+00:00',
+                                '2026-07-02T01:00:00+00:00'
+                            )
+                            """
+                        )
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO items (
+                                id, user_id, item_type, pub_ref, title, status,
+                                source, parse_status, created_at, updated_at
+                            )
+                            VALUES (
+                                'note-b', 'user-a', 'note', 'N1', 'Duplicate',
+                                'active', 'manual_entry', 'not_applicable',
+                                '2026-07-02T01:00:00+00:00',
+                                '2026-07-02T01:00:00+00:00'
+                            )
+                            """
+                        )
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    with conn:
+                        conn.execute(
+                            """
+                            UPDATE items
+                            SET pub_ref = 'T2'
+                            WHERE id = 'task-a'
+                            """
+                        )
 
 
 if __name__ == "__main__":

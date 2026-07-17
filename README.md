@@ -13,7 +13,7 @@ data model and the first direct Telegram task commands:
 - foundation tables for users, reference sequences, and health checks
 - Phase 1 task/note/category/tag tables and task services
 - application-level health and help actions
-- persistent per-user task refs such as `T1`
+- persistent per-user public refs on shared items (`T1` for tasks and `N1` for notes)
 - Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, and `/edit`
 - Docker and Docker Compose setup
 - unit tests for the foundation pieces

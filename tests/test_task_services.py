@@ -14,6 +14,7 @@ from tele_secretary.app.tasks import (
     complete_task,
     create_note,
     create_task,
+    get_note_details_by_ref,
     get_task_details,
     get_task_details_by_ref,
     list_active_tasks,
@@ -342,7 +343,34 @@ class TaskServiceTests(unittest.TestCase):
                 raw_input_text="random thought",
                 parse_status="fallback",
             )
+            second_note = create_note(
+                conn,
+                user_id="user-a",
+                title="Another note",
+                source="manual_entry",
+            )
+            other_user_note = create_note(
+                conn,
+                user_id="user-b",
+                title="Other user's note",
+                source="manual_entry",
+            )
+            fetched_note = get_note_details_by_ref(
+                conn,
+                user_id="user-a",
+                note_ref="n1",
+            )
+            with self.assertRaises(TaskNotFoundError):
+                get_note_details_by_ref(
+                    conn,
+                    user_id="user-b",
+                    note_ref=second_note.ref,
+                )
 
+        self.assertEqual(note.ref, "N1")
+        self.assertEqual(second_note.ref, "N2")
+        self.assertEqual(other_user_note.ref, "N1")
+        self.assertEqual(fetched_note, note)
         self.assertEqual(note.title, "Possible project idea")
         self.assertEqual(note.body, "Could turn this into a note workflow later.")
         self.assertEqual(note.parse_status, "fallback")
