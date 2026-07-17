@@ -16,6 +16,7 @@ from tele_secretary.app.tasks import (
     edit_task_by_ref,
     get_task_details_by_ref,
     list_active_tasks,
+    reopen_task,
 )
 from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.persistence.connection import connect
@@ -31,6 +32,9 @@ from tele_secretary.telegram.responses import (
     build_edit_usage_response,
     build_help_response,
     build_ping_response,
+    build_reopen_error_response,
+    build_reopen_usage_response,
+    build_task_reopened_response,
     build_show_usage_response,
     build_task_created_response,
     build_task_details_response,
@@ -90,6 +94,7 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("addtask", _addtask_handler(config)))
     application.add_handler(CommandHandler("show", _show_handler(config)))
     application.add_handler(CommandHandler("edit", _edit_handler(config)))
+    application.add_handler(CommandHandler("reopen", _reopen_handler(config)))
     return application
 
 
@@ -285,11 +290,61 @@ def _edit_handler(config: AppConfig) -> Any:
     return handler
 
 
+def _reopen_handler(config: AppConfig) -> Any:
+    async def handler(update: Any, context: Any) -> None:
+        del context
+        if not await _ensure_authorized(update, config):
+            return
+        if update.message is None or update.effective_user is None:
+            return
+
+        task_ref = parse_reopen_command_text(update.message.text or "")
+        if task_ref is None:
+            await update.message.reply_text(build_reopen_usage_response())
+            return
+
+        conn = connect(config.db_path)
+        try:
+            user_id = get_or_create_telegram_user_id(
+                conn,
+                telegram_user_id=config.telegram_allowed_user_ids[0],
+                timezone=config.user_timezone,
+            )
+            try:
+                task = get_task_details_by_ref(
+                    conn,
+                    user_id=user_id,
+                    task_ref=task_ref,
+                )
+                task = reopen_task(
+                    conn,
+                    user_id=user_id,
+                    task_id=task.id,
+                    source="telegram_command",
+                )
+            except TaskNotFoundError:
+                await update.message.reply_text(build_task_not_found_response(task_ref))
+                return
+            except TaskValidationError as exc:
+                await update.message.reply_text(build_reopen_error_response(exc.message))
+                return
+        finally:
+            conn.close()
+
+        await update.message.reply_text(build_task_reopened_response(task))
+
+    return handler
+
+
 def parse_show_command_text(command_text: str) -> str | None:
     command_parts = command_text.strip().split()
     if len(command_parts) != 2 or TASK_REF_PATTERN.fullmatch(command_parts[1]) is None:
         return None
     return command_parts[1].upper()
+
+
+def parse_reopen_command_text(command_text: str) -> str | None:
+    return parse_show_command_text(command_text)
 
 
 def parse_addtask_command_text(command_text: str, timezone_name: str) -> ParsedAddTaskCommand:

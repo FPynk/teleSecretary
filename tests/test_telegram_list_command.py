@@ -18,8 +18,10 @@ from tele_secretary.telegram.bot import (
     _help_handler,
     _list_handler,
     _ping_handler,
+    _reopen_handler,
     _show_handler,
     parse_addtask_command_text,
+    parse_reopen_command_text,
     parse_show_command_text,
 )
 from tele_secretary.telegram.responses import build_help_response
@@ -353,12 +355,174 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
             ["This Telegram account is not authorized to use TeleSecretary."],
         )
 
+    async def test_reopen_command_reopens_completed_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+                user_id = get_or_create_telegram_user_id(
+                    conn,
+                    telegram_user_id=1001,
+                    timezone=config.user_timezone,
+                )
+                task = create_task(
+                    conn,
+                    user_id=user_id,
+                    title="Email professor",
+                    source="manual_entry",
+                )
+                complete_task(
+                    conn,
+                    user_id=user_id,
+                    task_id=task.id,
+                    source="manual_entry",
+                    completed_at=datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc),
+                )
+                with conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE reminders (
+                            id TEXT PRIMARY KEY,
+                            item_id TEXT NOT NULL,
+                            status TEXT NOT NULL
+                        )
+                        """
+                    )
+                    conn.executemany(
+                        "INSERT INTO reminders (id, item_id, status) VALUES (?, ?, ?)",
+                        [
+                            ("cancelled-reminder", task.id, "cancelled"),
+                            ("sent-reminder", task.id, "sent"),
+                        ],
+                    )
+
+            update = self.build_update(telegram_user_id=1001, text="/reopen T1")
+            await _reopen_handler(config)(update, SimpleNamespace())
+
+            with open_test_database(config.db_path) as conn:
+                task_row = conn.execute(
+                    """
+                    SELECT items.status, task_items.completed_at
+                    FROM items
+                    JOIN task_items ON task_items.item_id = items.id
+                    WHERE items.id = ?
+                    """,
+                    (task.id,),
+                ).fetchone()
+                completion_events = conn.execute(
+                    "SELECT event_type, source FROM completion_logs WHERE item_id = ?",
+                    (task.id,),
+                ).fetchall()
+                reminder_rows = conn.execute(
+                    "SELECT id, status FROM reminders WHERE item_id = ? ORDER BY id",
+                    (task.id,),
+                ).fetchall()
+
+        self.assertEqual(update.message.replies, ['Reopened "Email professor".'])
+        self.assertEqual(task_row["status"], "active")
+        self.assertIsNone(task_row["completed_at"])
+        self.assertCountEqual(
+            [(row["event_type"], row["source"]) for row in completion_events],
+            [("completed", "manual_entry"), ("reopened", "telegram_command")],
+        )
+        self.assertEqual(
+            [(row["id"], row["status"]) for row in reminder_rows],
+            [("cancelled-reminder", "cancelled"), ("sent-reminder", "sent")],
+        )
+
+    async def test_reopen_command_handles_invalid_missing_and_active_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+                user_id = get_or_create_telegram_user_id(
+                    conn,
+                    telegram_user_id=1001,
+                    timezone=config.user_timezone,
+                )
+                create_task(
+                    conn,
+                    user_id=user_id,
+                    title="Already active",
+                    source="manual_entry",
+                )
+
+            invalid_update = self.build_update(telegram_user_id=1001, text="/reopen 1")
+            missing_update = self.build_update(telegram_user_id=1001, text="/reopen T99")
+            active_update = self.build_update(telegram_user_id=1001, text="/reopen T1")
+            for update in (invalid_update, missing_update, active_update):
+                await _reopen_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(invalid_update.message.replies, ["Usage: /reopen T<number>"])
+        self.assertEqual(
+            missing_update.message.replies,
+            ["Task T99 was not found. Use /list to see active task refs."],
+        )
+        self.assertEqual(
+            active_update.message.replies,
+            ["Could not reopen task: Only completed tasks can be reopened."],
+        )
+
+    async def test_reopen_command_does_not_disclose_another_owners_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO users (
+                            id, telegram_user_id, timezone, created_at, updated_at
+                        ) VALUES ('foreign-owner', 2002, 'America/Chicago', ?, ?)
+                        """,
+                        ("2026-07-17T00:00:00+00:00", "2026-07-17T00:00:00+00:00"),
+                    )
+                foreign_task = create_task(
+                    conn,
+                    user_id="foreign-owner",
+                    title="Private completed task",
+                    source="manual_entry",
+                )
+                complete_task(
+                    conn,
+                    user_id="foreign-owner",
+                    task_id=foreign_task.id,
+                    source="manual_entry",
+                )
+
+            update = self.build_update(telegram_user_id=1001, text="/reopen T1")
+            await _reopen_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(
+            update.message.replies,
+            ["Task T1 was not found. Use /list to see active task refs."],
+        )
+
+    async def test_reopen_command_respects_authorization(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir), allowed_user_ids=(2002,))
+
+            update = self.build_update(telegram_user_id=1001, text="/reopen T1")
+            await _reopen_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(
+            update.message.replies,
+            ["This Telegram account is not authorized to use TeleSecretary."],
+        )
+
     def test_show_parser_accepts_refs_and_rejects_extra_or_invalid_arguments(self) -> None:
         self.assertEqual(parse_show_command_text("/show T12"), "T12")
         self.assertEqual(parse_show_command_text("/show@TeleSecretaryBot t7"), "T7")
         self.assertIsNone(parse_show_command_text("/show"))
         self.assertIsNone(parse_show_command_text("/show T0"))
         self.assertIsNone(parse_show_command_text("/show T1 extra"))
+
+    def test_reopen_parser_accepts_refs_and_rejects_extra_or_invalid_arguments(self) -> None:
+        self.assertEqual(parse_reopen_command_text("/reopen T12"), "T12")
+        self.assertEqual(parse_reopen_command_text("/reopen@TeleSecretaryBot t7"), "T7")
+        self.assertIsNone(parse_reopen_command_text("/reopen"))
+        self.assertIsNone(parse_reopen_command_text("/reopen T0"))
+        self.assertIsNone(parse_reopen_command_text("/reopen T1 extra"))
 
     async def test_list_command_has_empty_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

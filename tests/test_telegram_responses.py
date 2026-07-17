@@ -10,10 +10,11 @@ class TelegramResponseTests(unittest.TestCase):
     def test_ping_response(self) -> None:
         self.assertEqual(build_ping_response(), "pong")
 
-    def test_help_response_lists_phase_zero_commands(self) -> None:
+    def test_help_response_lists_available_commands(self) -> None:
         response = build_help_response()
 
         self.assertIn("/ping", response)
+        self.assertIn("/reopen T<number>", response)
         self.assertIn("/list", response)
         self.assertIn("/addtask", response)
         self.assertIn("/show", response)

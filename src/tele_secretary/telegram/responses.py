@@ -42,6 +42,18 @@ def build_show_usage_response() -> str:
     return "Usage: /show T<number>"
 
 
+def build_reopen_usage_response() -> str:
+    return "Usage: /reopen T<number>"
+
+
+def build_reopen_error_response(error_message: str) -> str:
+    return f"Could not reopen task: {error_message}"
+
+
+def build_task_reopened_response(task: TaskRecord) -> str:
+    return f'Reopened "{task.title}".'
+
+
 def build_edit_usage_response(error_message: str | None = None) -> str:
     lines = []
     if error_message is not None:

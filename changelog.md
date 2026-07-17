@@ -2,6 +2,11 @@
 
 ## 2026-07-17
 
+- Added `/reopen T<number>` for reopening an owner-scoped completed task. It
+  clears the task's current completion timestamp without recreating reminders.
+
+## 2026-07-17
+
 - Moved stable public references onto the shared `items.pub_ref` field and
   removed the separate `task_refs` table through a forward migration.
 - Added owner-scoped `N<number>` references for notes and a shared lookup model
