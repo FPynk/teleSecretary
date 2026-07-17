@@ -8,19 +8,26 @@ from types import SimpleNamespace
 
 import _path  # noqa: F401
 from db_helpers import open_test_database
-from tele_secretary.app.tasks import complete_task, create_task, list_active_tasks
+from tele_secretary.app.tasks import (
+    complete_task,
+    create_task,
+    list_active_tasks,
+    soft_delete_task,
+)
 from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.config import AppConfig
 from tele_secretary.persistence.migrations import apply_migrations
 from tele_secretary.telegram.bot import (
     AddTaskCommandParseError,
     _addtask_handler,
+    _done_handler,
     _help_handler,
     _list_handler,
     _ping_handler,
     _reopen_handler,
     _show_handler,
     parse_addtask_command_text,
+    parse_done_command_text,
     parse_reopen_command_text,
     parse_show_command_text,
 )
@@ -510,6 +517,187 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
             ["This Telegram account is not authorized to use TeleSecretary."],
         )
 
+    async def test_done_command_completes_an_active_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+                user_id = get_or_create_telegram_user_id(
+                    conn,
+                    telegram_user_id=1001,
+                    timezone=config.user_timezone,
+                )
+                task = create_task(
+                    conn,
+                    user_id=user_id,
+                    title="Email professor",
+                    source="manual_entry",
+                )
+
+            update = self.build_update(
+                telegram_user_id=1001,
+                text="/done@TeleSecretaryBot T1",
+            )
+            await _done_handler(config)(update, SimpleNamespace())
+
+            with open_test_database(config.db_path) as conn:
+                task_row = conn.execute(
+                    """
+                    SELECT items.status, task_items.completed_at
+                    FROM items
+                    JOIN task_items ON task_items.item_id = items.id
+                    WHERE items.id = ?
+                    """,
+                    (task.id,),
+                ).fetchone()
+                completion_events = conn.execute(
+                    "SELECT event_type, source FROM completion_logs WHERE item_id = ?",
+                    (task.id,),
+                ).fetchall()
+
+        self.assertEqual(update.message.replies, ['Marked "Email professor" as done.'])
+        self.assertEqual(task_row["status"], "completed")
+        completed_at = datetime.fromisoformat(task_row["completed_at"])
+        self.assertEqual(completed_at.utcoffset(), timezone.utc.utcoffset(completed_at))
+        self.assertEqual(
+            [(row["event_type"], row["source"]) for row in completion_events],
+            [("completed", "telegram_command")],
+        )
+
+    async def test_done_command_handles_invalid_missing_and_completed_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+                user_id = get_or_create_telegram_user_id(
+                    conn,
+                    telegram_user_id=1001,
+                    timezone=config.user_timezone,
+                )
+                task = create_task(
+                    conn,
+                    user_id=user_id,
+                    title="Already done",
+                    source="manual_entry",
+                )
+                complete_task(
+                    conn,
+                    user_id=user_id,
+                    task_id=task.id,
+                    source="manual_entry",
+                )
+
+            missing_ref_update = self.build_update(telegram_user_id=1001, text="/done")
+            invalid_ref_update = self.build_update(telegram_user_id=1001, text="/done T0")
+            missing_task_update = self.build_update(telegram_user_id=1001, text="/done T99")
+            completed_task_update = self.build_update(telegram_user_id=1001, text="/done T1")
+            for update in (
+                missing_ref_update,
+                invalid_ref_update,
+                missing_task_update,
+                completed_task_update,
+            ):
+                await _done_handler(config)(update, SimpleNamespace())
+
+            with open_test_database(config.db_path) as conn:
+                task_row = conn.execute(
+                    "SELECT status FROM items WHERE id = ?",
+                    (task.id,),
+                ).fetchone()
+                completion_event_count = conn.execute(
+                    "SELECT COUNT(*) FROM completion_logs WHERE item_id = ?",
+                    (task.id,),
+                ).fetchone()[0]
+
+        self.assertEqual(missing_ref_update.message.replies, ["Usage: /done T<number>"])
+        self.assertEqual(invalid_ref_update.message.replies, ["Usage: /done T<number>"])
+        self.assertEqual(
+            missing_task_update.message.replies,
+            ["Task T99 was not found. Use /list to see active task refs."],
+        )
+        self.assertEqual(
+            completed_task_update.message.replies,
+            ["Could not complete task: Only active tasks can be completed."],
+        )
+        self.assertEqual(task_row["status"], "completed")
+        self.assertEqual(completion_event_count, 1)
+
+    async def test_done_command_does_not_disclose_inaccessible_or_deleted_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO users (
+                            id, telegram_user_id, timezone, created_at, updated_at
+                        ) VALUES ('foreign-owner', 2002, 'America/Chicago', ?, ?)
+                        """,
+                        ("2026-07-17T00:00:00+00:00", "2026-07-17T00:00:00+00:00"),
+                    )
+                inaccessible_task = create_task(
+                    conn,
+                    user_id="foreign-owner",
+                    title="Private task",
+                    source="manual_entry",
+                )
+                user_id = get_or_create_telegram_user_id(
+                    conn,
+                    telegram_user_id=1001,
+                    timezone=config.user_timezone,
+                )
+                deleted_task = create_task(
+                    conn,
+                    user_id=user_id,
+                    title="Deleted task",
+                    source="manual_entry",
+                )
+                soft_delete_task(
+                    conn,
+                    user_id=user_id,
+                    task_id=deleted_task.id,
+                    source="manual_entry",
+                )
+
+            inaccessible_update = self.build_update(telegram_user_id=1001, text="/done T1")
+            deleted_update = self.build_update(telegram_user_id=1001, text="/done T1")
+            await _done_handler(config)(inaccessible_update, SimpleNamespace())
+            await _done_handler(config)(deleted_update, SimpleNamespace())
+
+            with open_test_database(config.db_path) as conn:
+                inaccessible_status = conn.execute(
+                    "SELECT status FROM items WHERE id = ?",
+                    (inaccessible_task.id,),
+                ).fetchone()["status"]
+                deleted_status = conn.execute(
+                    "SELECT status FROM items WHERE id = ?",
+                    (deleted_task.id,),
+                ).fetchone()["status"]
+
+        self.assertEqual(
+            inaccessible_update.message.replies,
+            ["Task T1 was not found. Use /list to see active task refs."],
+        )
+        self.assertEqual(
+            deleted_update.message.replies,
+            ["Task T1 was not found. Use /list to see active task refs."],
+        )
+        self.assertEqual(inaccessible_status, "active")
+        self.assertEqual(deleted_status, "deleted")
+
+    async def test_done_command_respects_authorization_before_database_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir), allowed_user_ids=(2002,))
+
+            update = self.build_update(telegram_user_id=1001, text="/done T1")
+            await _done_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(
+            update.message.replies,
+            ["This Telegram account is not authorized to use TeleSecretary."],
+        )
+
     def test_show_parser_accepts_refs_and_rejects_extra_or_invalid_arguments(self) -> None:
         self.assertEqual(parse_show_command_text("/show T12"), "T12")
         self.assertEqual(parse_show_command_text("/show@TeleSecretaryBot t7"), "T7")
@@ -523,6 +711,13 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(parse_reopen_command_text("/reopen"))
         self.assertIsNone(parse_reopen_command_text("/reopen T0"))
         self.assertIsNone(parse_reopen_command_text("/reopen T1 extra"))
+
+    def test_done_parser_accepts_refs_and_rejects_extra_or_invalid_arguments(self) -> None:
+        self.assertEqual(parse_done_command_text("/done T12"), "T12")
+        self.assertEqual(parse_done_command_text("/done@TeleSecretaryBot t7"), "T7")
+        self.assertIsNone(parse_done_command_text("/done"))
+        self.assertIsNone(parse_done_command_text("/done T0"))
+        self.assertIsNone(parse_done_command_text("/done T1 extra"))
 
     async def test_list_command_has_empty_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

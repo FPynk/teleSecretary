@@ -42,6 +42,18 @@ def build_show_usage_response() -> str:
     return "Usage: /show T<number>"
 
 
+def build_done_usage_response() -> str:
+    return "Usage: /done T<number>"
+
+
+def build_done_error_response(error_message: str) -> str:
+    return f"Could not complete task: {error_message}"
+
+
+def build_task_completed_response(task: TaskRecord) -> str:
+    return f'Marked "{task.title}" as done.'
+
+
 def build_reopen_usage_response() -> str:
     return "Usage: /reopen T<number>"
 

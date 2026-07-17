@@ -89,6 +89,7 @@ def get_help_text(topic: str | None = None) -> str:
             "- /addtask <title> [-due DD/MM/YYYY] - add a task",
             "- /show T<number> - show full task details",
             "- /edit T<number> -field value [...] - edit task fields",
+            "- /done T<number> - mark a task complete",
             "- /reopen T<number> - reopen a completed task",
             "- /help [topic] - show command help",
             "",

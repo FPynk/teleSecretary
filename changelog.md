@@ -2,6 +2,11 @@
 
 ## 2026-07-17
 
+- Added `/done T<number>` for completing an owner-scoped active task, recording
+  its UTC completion timestamp and completion event.
+
+## 2026-07-17
+
 - Added `/reopen T<number>` for reopening an owner-scoped completed task. It
   clears the task's current completion timestamp without recreating reminders.
 
