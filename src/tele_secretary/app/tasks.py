@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from sqlite3 import Connection
 from typing import Any
 from uuid import uuid4
 
 from tele_secretary.persistence.refs import allocate_ref
-from tele_secretary.time_utils import to_storage_text, utc_now_iso
+from tele_secretary.time_utils import (
+    ensure_utc,
+    to_storage_text,
+    utc_now,
+    utc_now_iso,
+    utc_to_local,
+)
 
 
 ALLOWED_SOURCES = {
@@ -117,6 +123,12 @@ class NoteRecord:
 class DeleteTaskResult:
     task_id: str
     deleted_at: str
+
+
+@dataclass(frozen=True)
+class FocusTaskRecord:
+    task: TaskRecord
+    reason: str
 
 
 class _UnsetValue:
@@ -392,6 +404,102 @@ def list_active_tasks(
         params.append(category_id)
     sql += " ORDER BY items.created_at ASC, items.id ASC"
     return tuple(_task_from_row(conn, row) for row in conn.execute(sql, params).fetchall())
+
+
+def get_focus_today(
+    conn: Connection,
+    *,
+    user_id: str,
+    timezone_name: str,
+    now: datetime | None = None,
+) -> tuple[FocusTaskRecord, ...]:
+    now_utc = ensure_utc(now or utc_now())
+    local_now = utc_to_local(now_utc, timezone_name)
+    local_day_start = datetime.combine(local_now.date(), time.min, local_now.tzinfo)
+    next_local_day_start = datetime.combine(
+        local_now.date() + timedelta(days=1),
+        time.min,
+        local_now.tzinfo,
+    )
+    day_after_next_local_start = datetime.combine(
+        local_now.date() + timedelta(days=2),
+        time.min,
+        local_now.tzinfo,
+    )
+
+    focused_tasks = []
+    for task in list_active_tasks(conn, user_id=user_id):
+        deadline_at = _parse_stored_datetime(task.deadline_at)
+        planned_start_at = _parse_stored_datetime(task.planned_start_at)
+        planned_end_at = _parse_stored_datetime(task.planned_end_at)
+
+        if deadline_at is not None and deadline_at < now_utc:
+            reason = "overdue"
+        elif (
+            deadline_at is not None
+            and deadline_at < next_local_day_start.astimezone(now_utc.tzinfo)
+        ):
+            reason = "due today"
+        elif (
+            deadline_at is not None
+            and task.deadline_type == "hard"
+            and deadline_at < day_after_next_local_start.astimezone(now_utc.tzinfo)
+        ):
+            reason = "hard due tomorrow"
+        elif _planned_window_overlaps_today(
+            planned_start_at,
+            planned_end_at,
+            local_day_start,
+            next_local_day_start,
+        ):
+            reason = "planned today"
+        elif deadline_at is None and task.urgency in {"high", "top_priority"}:
+            reason = "urgent undated"
+        else:
+            continue
+        focused_tasks.append(FocusTaskRecord(task=task, reason=reason))
+
+    return tuple(sorted(focused_tasks, key=_focus_task_sort_key))
+
+
+def _parse_stored_datetime(value: str | None) -> datetime | None:
+    return None if value is None else ensure_utc(datetime.fromisoformat(value))
+
+
+def _planned_window_overlaps_today(
+    planned_start_at: datetime | None,
+    planned_end_at: datetime | None,
+    local_day_start: datetime,
+    next_local_day_start: datetime,
+) -> bool:
+    if planned_start_at is not None and planned_start_at >= next_local_day_start:
+        return False
+    if planned_end_at is not None and planned_end_at <= local_day_start:
+        return False
+    return planned_start_at is not None or planned_end_at is not None
+
+
+def _focus_task_sort_key(focus_task: FocusTaskRecord) -> tuple[int, float, int, int]:
+    reason_priority = {
+        "overdue": 0,
+        "due today": 1,
+        "hard due tomorrow": 2,
+        "planned today": 3,
+        "urgent undated": 4,
+    }
+    urgency_priority = {"top_priority": 0, "high": 1}
+    task = focus_task.task
+    scheduled_at = (
+        _parse_stored_datetime(task.deadline_at)
+        or _parse_stored_datetime(task.planned_start_at)
+        or _parse_stored_datetime(task.planned_end_at)
+    )
+    return (
+        reason_priority[focus_task.reason],
+        scheduled_at.timestamp() if scheduled_at is not None else float("inf"),
+        urgency_priority.get(task.urgency, 2),
+        int(task.ref[1:]),
+    )
 
 
 def list_categories_and_tags(

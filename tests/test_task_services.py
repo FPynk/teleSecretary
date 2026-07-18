@@ -14,6 +14,7 @@ from tele_secretary.app.tasks import (
     complete_task,
     create_note,
     create_task,
+    get_focus_today,
     get_note_details_by_ref,
     get_task_details,
     get_task_details_by_ref,
@@ -218,6 +219,194 @@ class TaskServiceTests(unittest.TestCase):
                 )
 
         self.assertEqual(error.exception.code, "invalid_planned_window")
+
+    def test_focus_today_selects_prioritized_active_tasks_once(self) -> None:
+        now = datetime(2026, 7, 17, 15, 0, tzinfo=timezone.utc)
+
+        with self.open_seeded_database() as conn:
+            overdue_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Overdue",
+                source="manual_entry",
+                deadline_at=datetime(2026, 7, 16, 20, 0, tzinfo=timezone.utc),
+                deadline_type="soft",
+            )
+            due_today_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Due today",
+                source="manual_entry",
+                deadline_at=datetime(2026, 7, 17, 20, 0, tzinfo=timezone.utc),
+                deadline_type="soft",
+            )
+            hard_tomorrow_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Hard due tomorrow",
+                source="manual_entry",
+                deadline_at=datetime(2026, 7, 18, 20, 0, tzinfo=timezone.utc),
+                deadline_type="hard",
+            )
+            planned_today_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Planned today",
+                source="manual_entry",
+                planned_start_at=datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc),
+                planned_end_at=datetime(2026, 7, 17, 17, 0, tzinfo=timezone.utc),
+            )
+            high_priority_task = create_task(
+                conn,
+                user_id="user-a",
+                title="High priority",
+                source="manual_entry",
+                urgency="high",
+            )
+            top_priority_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Top priority",
+                source="manual_entry",
+                urgency="top_priority",
+            )
+            overlapping_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Due and planned today",
+                source="manual_entry",
+                deadline_at=datetime(2026, 7, 17, 21, 0, tzinfo=timezone.utc),
+                deadline_type="hard",
+                planned_start_at=datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc),
+            )
+            create_task(
+                conn,
+                user_id="user-a",
+                title="Soft due tomorrow",
+                source="manual_entry",
+                deadline_at=datetime(2026, 7, 18, 20, 0, tzinfo=timezone.utc),
+                deadline_type="soft",
+            )
+            create_task(
+                conn,
+                user_id="user-a",
+                title="Planned tomorrow",
+                source="manual_entry",
+                planned_start_at=datetime(2026, 7, 18, 16, 0, tzinfo=timezone.utc),
+            )
+            completed_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Completed",
+                source="manual_entry",
+                urgency="top_priority",
+            )
+            complete_task(
+                conn,
+                user_id="user-a",
+                task_id=completed_task.id,
+                source="manual_entry",
+            )
+            deleted_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Deleted",
+                source="manual_entry",
+                urgency="top_priority",
+            )
+            soft_delete_task(
+                conn,
+                user_id="user-a",
+                task_id=deleted_task.id,
+                source="manual_entry",
+            )
+            create_note(
+                conn,
+                user_id="user-a",
+                title="Not a task",
+                source="manual_entry",
+            )
+
+            focus_tasks = get_focus_today(
+                conn,
+                user_id="user-a",
+                timezone_name="America/Chicago",
+                now=now,
+            )
+
+        self.assertEqual(
+            [(focus_task.task.id, focus_task.reason) for focus_task in focus_tasks],
+            [
+                (overdue_task.id, "overdue"),
+                (due_today_task.id, "due today"),
+                (overlapping_task.id, "due today"),
+                (hard_tomorrow_task.id, "hard due tomorrow"),
+                (planned_today_task.id, "planned today"),
+                (top_priority_task.id, "urgent undated"),
+                (high_priority_task.id, "urgent undated"),
+            ],
+        )
+
+    def test_focus_today_uses_local_date_boundaries(self) -> None:
+        now = datetime(2026, 7, 18, 4, 30, tzinfo=timezone.utc)
+
+        with self.open_seeded_database() as conn:
+            overdue_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Overdue before local midnight",
+                source="manual_entry",
+                deadline_at=datetime(2026, 7, 18, 4, 29, tzinfo=timezone.utc),
+                deadline_type="hard",
+            )
+            due_today_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Due before local midnight",
+                source="manual_entry",
+                deadline_at=datetime(2026, 7, 18, 4, 59, tzinfo=timezone.utc),
+                deadline_type="hard",
+            )
+            hard_tomorrow_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Due at next local midnight",
+                source="manual_entry",
+                deadline_at=datetime(2026, 7, 18, 5, 0, tzinfo=timezone.utc),
+                deadline_type="hard",
+            )
+            planned_today_task = create_task(
+                conn,
+                user_id="user-a",
+                title="Planned across local midnight",
+                source="manual_entry",
+                planned_start_at=datetime(2026, 7, 18, 4, 45, tzinfo=timezone.utc),
+                planned_end_at=datetime(2026, 7, 18, 5, 15, tzinfo=timezone.utc),
+            )
+            create_task(
+                conn,
+                user_id="user-a",
+                title="Planned after local midnight",
+                source="manual_entry",
+                planned_start_at=datetime(2026, 7, 18, 5, 15, tzinfo=timezone.utc),
+            )
+
+            focus_tasks = get_focus_today(
+                conn,
+                user_id="user-a",
+                timezone_name="America/Chicago",
+                now=now,
+            )
+
+        self.assertEqual(
+            [(focus_task.task.id, focus_task.reason) for focus_task in focus_tasks],
+            [
+                (overdue_task.id, "overdue"),
+                (due_today_task.id, "due today"),
+                (hard_tomorrow_task.id, "hard due tomorrow"),
+                (planned_today_task.id, "planned today"),
+            ],
+        )
 
     def test_complete_and_reopen_task_write_completion_logs(self) -> None:
         completed_at = datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)

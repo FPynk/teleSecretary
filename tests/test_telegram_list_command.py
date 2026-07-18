@@ -26,6 +26,7 @@ from tele_secretary.telegram.bot import (
     _ping_handler,
     _reopen_handler,
     _show_handler,
+    _today_handler,
     parse_addtask_command_text,
     parse_done_command_text,
     parse_reopen_command_text,
@@ -692,6 +693,50 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
             update = self.build_update(telegram_user_id=1001, text="/done T1")
             await _done_handler(config)(update, SimpleNamespace())
+
+        self.assertEqual(
+            update.message.replies,
+            ["This Telegram account is not authorized to use TeleSecretary."],
+        )
+
+    async def test_today_command_shows_focus_tasks_and_empty_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir))
+            with open_test_database(config.db_path) as conn:
+                apply_migrations(conn)
+
+            empty_update = self.build_update(telegram_user_id=1001, text="/today")
+            await _today_handler(config)(empty_update, SimpleNamespace())
+
+            with open_test_database(config.db_path) as conn:
+                user_id = get_or_create_telegram_user_id(
+                    conn,
+                    telegram_user_id=1001,
+                    timezone=config.user_timezone,
+                )
+                create_task(
+                    conn,
+                    user_id=user_id,
+                    title="Pay rent",
+                    source="manual_entry",
+                    urgency="top_priority",
+                )
+
+            focus_update = self.build_update(telegram_user_id=1001, text="/today")
+            await _today_handler(config)(focus_update, SimpleNamespace())
+
+        self.assertEqual(empty_update.message.replies, ["No tasks need your focus today."])
+        self.assertEqual(
+            focus_update.message.replies,
+            ["Focus today:\n1. T1 — Pay rent — urgent undated"],
+        )
+
+    async def test_today_command_respects_authorization(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.build_config(Path(temp_dir), allowed_user_ids=(2002,))
+
+            update = self.build_update(telegram_user_id=1001, text="/today")
+            await _today_handler(config)(update, SimpleNamespace())
 
         self.assertEqual(
             update.message.replies,

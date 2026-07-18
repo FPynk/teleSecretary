@@ -16,6 +16,7 @@ from tele_secretary.app.tasks import (
     create_task,
     edit_task_by_ref,
     get_task_details_by_ref,
+    get_focus_today,
     list_active_tasks,
     reopen_task,
 )
@@ -46,6 +47,7 @@ from tele_secretary.telegram.responses import (
     build_task_updated_response,
     build_task_owner_not_configured_response,
     build_task_list_response,
+    build_today_focus_response,
     build_unauthorized_response,
 )
 
@@ -100,6 +102,7 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("edit", _edit_handler(config)))
     application.add_handler(CommandHandler("done", _done_handler(config)))
     application.add_handler(CommandHandler("reopen", _reopen_handler(config)))
+    application.add_handler(CommandHandler("today", _today_handler(config)))
     return application
 
 
@@ -383,6 +386,34 @@ def _done_handler(config: AppConfig) -> Any:
             conn.close()
 
         await update.message.reply_text(build_task_completed_response(task))
+
+    return handler
+
+
+def _today_handler(config: AppConfig) -> Any:
+    async def handler(update: Any, context: Any) -> None:
+        del context
+        if not await _ensure_authorized(update, config):
+            return
+        if update.message is None or update.effective_user is None:
+            return
+
+        conn = connect(config.db_path)
+        try:
+            user_id = get_or_create_telegram_user_id(
+                conn,
+                telegram_user_id=config.telegram_allowed_user_ids[0],
+                timezone=config.user_timezone,
+            )
+            focus_tasks = get_focus_today(
+                conn,
+                user_id=user_id,
+                timezone_name=config.user_timezone,
+            )
+        finally:
+            conn.close()
+
+        await update.message.reply_text(build_today_focus_response(focus_tasks))
 
     return handler
 

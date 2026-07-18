@@ -91,6 +91,7 @@ def get_help_text(topic: str | None = None) -> str:
             "- /edit T<number> -field value [...] - edit task fields",
             "- /done T<number> - mark a task complete",
             "- /reopen T<number> - reopen a completed task",
+            "- /today - show your deterministic focus list",
             "- /help [topic] - show command help",
             "",
             "Use /help edit for detailed edit instructions.",

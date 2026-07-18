@@ -2,6 +2,12 @@
 
 ## 2026-07-17
 
+- Added `/today` for a deterministic, timezone-aware task focus list covering
+  overdue tasks, due-today tasks, hard deadlines due tomorrow, planned-today
+  tasks, and urgent undated tasks.
+
+## 2026-07-17
+
 - Added `/done T<number>` for completing an owner-scoped active task, recording
   its UTC completion timestamp and completion event.
 

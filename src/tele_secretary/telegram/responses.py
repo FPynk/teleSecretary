@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from tele_secretary.app.help import get_help_text
-from tele_secretary.app.tasks import TaskRecord
+from tele_secretary.app.tasks import FocusTaskRecord, TaskRecord
 from tele_secretary.time_utils import utc_to_local
 
 
@@ -24,6 +24,18 @@ def build_task_list_response(tasks: tuple[TaskRecord, ...]) -> str:
     lines = ["Active tasks:"]
     for task in tasks:
         lines.append(f"{task.ref} — {task.title}")
+    return "\n".join(lines)
+
+
+def build_today_focus_response(focus_tasks: tuple[FocusTaskRecord, ...]) -> str:
+    if not focus_tasks:
+        return "No tasks need your focus today."
+
+    lines = ["Focus today:"]
+    for index, focus_task in enumerate(focus_tasks, start=1):
+        lines.append(
+            f"{index}. {focus_task.task.ref} — {focus_task.task.title} — {focus_task.reason}"
+        )
     return "\n".join(lines)
 
 
