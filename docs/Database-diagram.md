@@ -67,6 +67,22 @@ erDiagram
         TEXT completed_at
     }
 
+    reminders {
+        TEXT id PK
+        TEXT item_id FK
+        TEXT scheduled_at
+        TEXT status
+        TEXT delivery_channel
+        INTEGER retry_count
+        TEXT last_attempted_at
+        TEXT sent_at
+        TEXT failure_reason
+        TEXT cancelled_at
+        TEXT expired_at
+        TEXT created_at
+        TEXT updated_at
+    }
+
     note_items {
         TEXT item_id PK, FK
         TEXT body
@@ -95,6 +111,7 @@ erDiagram
 
     categories ||--o{ task_items : categorizes
     task_items ||--o{ completion_logs : records
+    task_items ||--o{ reminders : schedules
 
     items ||--o{ item_tags : has
     tags ||--o{ item_tags : labels
@@ -110,6 +127,8 @@ erDiagram
   `task_items.category_id` to `NULL`.
 - `item_tags` is the many-to-many join table between `items` and `tags`.
 - `completion_logs` only attach to task rows through `task_items`.
+- `reminders` are separate scheduled notification lifecycles. They reference
+  `task_items` directly, so only tasks can receive reminders.
 - `items.pub_ref` gives every item a stable, human-friendly reference while
   `items.id` remains the internal UUID-backed identity. Tasks use refs such as
   `T12`; notes use refs such as `N4`.
@@ -133,6 +152,12 @@ erDiagram
   `T1`, while one user cannot have two items with the same public ref.
 - Task refs use canonical `T[1-9][0-9]*` values; note refs use canonical
   `N[1-9][0-9]*` values. Leading zeroes are not valid.
+- `reminders.status` is `pending`, `processing`, `sent`, `failed`, `cancelled`,
+  or `expired`; terminal timestamps must match the terminal state.
+- Only Telegram delivery is supported in V1. Retry counts cannot be negative.
+- Pending and processing reminders are unique by task, scheduled time, and
+  delivery channel. Terminal reminders remain as history and do not block a
+  replacement.
 
 ## Migration Notes
 
@@ -144,6 +169,9 @@ erDiagram
   `items.pub_ref`, assigns refs to existing notes, advances note sequences,
   enforces stable owner-scoped refs, and removes the transitional `task_refs`
   table.
+- `0005_reminders.sql` creates task-linked reminder lifecycles, their
+  persistence constraints, due-polling and task/status indexes, and active
+  duplicate prevention.
 
 ## Data Dictionary
 
@@ -250,6 +278,27 @@ optional so a title-only task remains valid.
 | `estimated_minutes` | Optional positive estimate of how many minutes the task will take. |
 | `urgency` | Optional user-facing urgency level: `low`, `medium`, `high`, or `top_priority`. |
 | `completed_at` | UTC time of the task's current/latest completion. It returns to `NULL` when the task is reopened; history remains in `completion_logs`. |
+
+### `reminders`
+
+Separate notification lifecycles scheduled for tasks. Reminder ownership is
+inherited through its task; it is not duplicated on the reminder row.
+
+| Column | Semantic meaning |
+| --- | --- |
+| `id` | Stable internal UUID-backed identifier for one reminder lifecycle. It is not user-facing. |
+| `item_id` | Internal ID of the task receiving the reminder. It references `task_items.item_id`, so notes cannot receive reminders. |
+| `scheduled_at` | UTC instant when the reminder first becomes due. |
+| `status` | Lifecycle state: `pending`, `processing`, `sent`, `failed`, `cancelled`, or `expired`. |
+| `delivery_channel` | Delivery adapter selected for the reminder. V1 supports `telegram` only. |
+| `retry_count` | Non-negative count of delivery attempts already made. |
+| `last_attempted_at` | UTC time of the latest delivery attempt; `NULL` before any attempt. |
+| `sent_at` | UTC successful-delivery time. It is present exactly when `status` is `sent`. |
+| `failure_reason` | Latest sanitized delivery failure detail. It is required for terminal `failed` reminders. |
+| `cancelled_at` | UTC cancellation time. It is present exactly when `status` is `cancelled`. |
+| `expired_at` | UTC time when the reminder was deemed too stale to send. It is present exactly when `status` is `expired`. |
+| `created_at` | UTC time when the reminder lifecycle was created. |
+| `updated_at` | UTC time when the reminder row was most recently changed. |
 
 ### `note_items`
 

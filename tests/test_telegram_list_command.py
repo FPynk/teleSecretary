@@ -387,20 +387,34 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
                     completed_at=datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc),
                 )
                 with conn:
-                    conn.execute(
-                        """
-                        CREATE TABLE reminders (
-                            id TEXT PRIMARY KEY,
-                            item_id TEXT NOT NULL,
-                            status TEXT NOT NULL
-                        )
-                        """
-                    )
                     conn.executemany(
-                        "INSERT INTO reminders (id, item_id, status) VALUES (?, ?, ?)",
+                        """
+                        INSERT INTO reminders (
+                            id, item_id, scheduled_at, status, cancelled_at,
+                            sent_at, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
                         [
-                            ("cancelled-reminder", task.id, "cancelled"),
-                            ("sent-reminder", task.id, "sent"),
+                            (
+                                "cancelled-reminder",
+                                task.id,
+                                "2026-07-18T12:00:00+00:00",
+                                "cancelled",
+                                "2026-07-17T12:00:00+00:00",
+                                None,
+                                "2026-07-17T12:00:00+00:00",
+                                "2026-07-17T12:00:00+00:00",
+                            ),
+                            (
+                                "sent-reminder",
+                                task.id,
+                                "2026-07-18T13:00:00+00:00",
+                                "sent",
+                                None,
+                                "2026-07-17T12:00:00+00:00",
+                                "2026-07-17T12:00:00+00:00",
+                                "2026-07-17T12:00:00+00:00",
+                            ),
                         ],
                     )
 

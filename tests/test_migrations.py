@@ -40,6 +40,10 @@ class MigrationTests(unittest.TestCase):
                     row["name"]
                     for row in conn.execute("PRAGMA table_info(note_items)").fetchall()
                 }
+                reminder_indexes = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA index_list(reminders)").fetchall()
+                }
 
         self.assertEqual(
             first.applied,
@@ -48,6 +52,7 @@ class MigrationTests(unittest.TestCase):
                 "0002_phase1_items.sql",
                 "0003_task_refs.sql",
                 "0004_subtype_public_references.sql",
+                "0005_reminders.sql",
             ),
         )
         self.assertEqual(second.applied, ())
@@ -58,6 +63,7 @@ class MigrationTests(unittest.TestCase):
                 "0002_phase1_items.sql",
                 "0003_task_refs.sql",
                 "0004_subtype_public_references.sql",
+                "0005_reminders.sql",
             ),
         )
         self.assertEqual(
@@ -67,6 +73,7 @@ class MigrationTests(unittest.TestCase):
                 "0002_phase1_items.sql",
                 "0003_task_refs.sql",
                 "0004_subtype_public_references.sql",
+                "0005_reminders.sql",
             ),
         )
         self.assertIn("users", tables)
@@ -79,10 +86,20 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("tags", tables)
         self.assertIn("item_tags", tables)
         self.assertIn("completion_logs", tables)
+        self.assertIn("reminders", tables)
         self.assertNotIn("task_refs", tables)
         self.assertIn("pub_ref", item_columns)
         self.assertNotIn("pub_ref", task_item_columns)
         self.assertNotIn("pub_ref", note_item_columns)
+        self.assertEqual(
+            reminder_indexes,
+            {
+                "idx_reminders_pending_schedule",
+                "idx_reminders_item_status_schedule",
+                "idx_reminders_unique_active_schedule",
+                "sqlite_autoindex_reminders_1",
+            },
+        )
 
     def test_item_reference_migration_moves_task_refs_and_backfills_notes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -175,11 +192,59 @@ class MigrationTests(unittest.TestCase):
                     """
                 ).fetchone()
 
-        self.assertEqual(result.applied, ("0004_subtype_public_references.sql",))
+        self.assertEqual(
+            result.applied,
+            ("0004_subtype_public_references.sql", "0005_reminders.sql"),
+        )
         self.assertEqual(task_ref, "T1")
         self.assertEqual(note_ref, "N1")
         self.assertEqual(next_values, {"task": 2, "note": 2})
         self.assertIsNone(task_refs_table)
+
+    def test_reminder_migration_preserves_existing_task_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "secretary.sqlite3"
+            with open_test_database(db_path) as conn:
+                ensure_migration_table(conn)
+                for migration_name, sql in iter_migration_sql()[:4]:
+                    with conn:
+                        conn.executescript(sql)
+                        conn.execute(
+                            "INSERT INTO schema_migrations (version) VALUES (?)",
+                            (migration_name,),
+                        )
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO users (id, telegram_user_id, timezone)
+                        VALUES ('user-a', 1001, 'America/Chicago')
+                        """
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO items (
+                            id, user_id, item_type, pub_ref, title, status, source,
+                            parse_status, created_at, updated_at
+                        )
+                        VALUES (
+                            'task-a', 'user-a', 'task', 'T1', 'Existing task',
+                            'active', 'manual_entry', 'not_applicable',
+                            '2026-07-01T00:00:00+00:00',
+                            '2026-07-01T00:00:00+00:00'
+                        )
+                        """
+                    )
+                    conn.execute("INSERT INTO task_items (item_id) VALUES ('task-a')")
+
+                result = apply_migrations(conn)
+                task_row = conn.execute(
+                    "SELECT pub_ref, title FROM items WHERE id = 'task-a'"
+                ).fetchone()
+                reminder_count = conn.execute("SELECT COUNT(*) FROM reminders").fetchone()[0]
+
+        self.assertEqual(result.applied, ("0005_reminders.sql",))
+        self.assertEqual((task_row["pub_ref"], task_row["title"]), ("T1", "Existing task"))
+        self.assertEqual(reminder_count, 0)
 
 
 if __name__ == "__main__":
