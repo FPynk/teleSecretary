@@ -2,6 +2,10 @@
 
 ## 2026-07-20
 
+- Added deterministic V1 reminder-time parsing for `tomorrow`, weekdays, and
+  `DD/MM/YYYY` expressions with 12- or 24-hour times.
+- Resolves local calendar values to future UTC instants, including typed
+  best-effort handling for daylight-saving gaps and overlaps.
 - Added the task-linked reminder persistence schema with lifecycle validation,
   Telegram-only delivery, retry metadata, due-polling indexes, and active
   duplicate prevention. Reminder services and delivery remain future work.
