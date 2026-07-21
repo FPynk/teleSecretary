@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-20
+
+- Added the task-linked reminder persistence schema with lifecycle validation,
+  Telegram-only delivery, retry metadata, due-polling indexes, and active
+  duplicate prevention. Reminder services and delivery remain future work.
+
 ## 2026-07-17
 
 - Added `/today` for a deterministic, timezone-aware task focus list covering
