@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-07-20
+
+- Added deterministic V1 reminder-time parsing for `tomorrow`, weekdays, and
+  `DD/MM/YYYY` expressions with 12- or 24-hour times.
+- Resolves local calendar values to future UTC instants, including typed
+  best-effort handling for daylight-saving gaps and overlaps.
+
 ## 2026-07-17
 
 - Added `/today` for a deterministic, timezone-aware task focus list covering
