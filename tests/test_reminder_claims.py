@@ -13,8 +13,8 @@ import _path  # noqa: F401
 from db_helpers import open_test_database
 from tele_secretary.persistence.connection import connect
 from tele_secretary.persistence.migrations import apply_migrations
-from tele_secretary.scheduler import claims
-from tele_secretary.scheduler.claims import (
+from tele_secretary.app import reminders
+from tele_secretary.app.reminders import (
     DEFAULT_CLAIM_BATCH_SIZE,
     MAX_CLAIM_BATCH_SIZE,
     claim_due_reminders,
@@ -135,7 +135,7 @@ class ReminderClaimTests(unittest.TestCase):
             self._insert_task(conn, "task-a", "user-a", "T1", "Task")
             self._insert_reminder(conn, "due", "task-a", "2026-07-22T14:59:00+00:00")
 
-            with patch.object(claims, "_claimed_reminder_from_row", side_effect=RuntimeError("forced")):
+            with patch.object(reminders, "_claimed_reminder_from_row", side_effect=RuntimeError("forced")):
                 with self.assertRaisesRegex(RuntimeError, "forced"):
                     claim_due_reminders(conn, now=NOW)
             status = conn.execute("SELECT status FROM reminders WHERE id = 'due'").fetchone()[0]
