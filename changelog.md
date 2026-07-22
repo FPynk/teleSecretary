@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-21
+
+- Added owner-scoped reminder creation, retrieval, and pending-listing services.
+- Enforced active-task ownership, future UTC schedule validation, and typed
+  duplicate active-reminder errors.
+
 ## 2026-07-20
 
 - Added deterministic V1 reminder-time parsing for `tomorrow`, weekdays, and
