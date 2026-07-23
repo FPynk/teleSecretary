@@ -15,12 +15,12 @@ data model and the first direct Telegram task commands:
 - task-linked reminder persistence with lifecycle constraints and indexes
 - application-level health and help actions
 - persistent per-user public refs on shared items (`T1` for tasks and `N1` for notes)
-- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, `/edit`, `/done`, `/reopen`, and `/today`
+- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, `/edit`, `/done`, `/reopen`, `/today`, and `/remind`
 - Docker and Docker Compose setup
 - unit tests for the foundation pieces
 
-Reminder services and delivery, natural-language parsing, and LLM integration
-are later phases.
+Reminder creation is available through `/remind`. Delivery, cancellation,
+natural-language parsing, and LLM integration are later phases.
 
 ## Telegram Commands
 
@@ -34,6 +34,11 @@ are later phases.
 - `/done T<number>` - mark an active task complete
 - `/reopen T<number>` - reopen a completed task
 - `/today` - show your deterministic task focus list
+- `/remind T<number> <time>` - set a task reminder
+
+`/remind` accepts deterministic V1 times such as `tomorrow 2pm`, `fri 14:30`,
+and `25/07/2026 2:30 PM`. Expressions and confirmation times use the configured
+IANA user timezone; reminders are stored in UTC.
 
 ## Local Setup
 
@@ -47,12 +52,11 @@ cp .env.example .env
 ```
 
 Fill in `TELEGRAM_BOT_TOKEN` in `.env` before starting the bot. Set
-`TELEGRAM_ALLOWED_USER_IDS` to a comma-separated list of Telegram user IDs to
-restrict access. If it is empty, Telegram commands are disabled.
+`TELEGRAM_ALLOWED_USER_IDS` to your Telegram user ID. If it is empty, Telegram
+commands are disabled.
 
-Task commands are currently single-user. Use your Telegram ID in
-`TELEGRAM_ALLOWED_USER_IDS`; the first ID in that list is treated as the task
-owner.
+TeleSecretary is currently single-user. Configure one Telegram ID in
+`TELEGRAM_ALLOWED_USER_IDS`; it is the task and reminder owner.
 
 The bot applies pending migrations once during startup. Individual Telegram
 command handlers assume the database schema is already ready.

@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 
 import _path  # noqa: F401
-from tele_secretary.telegram.responses import build_help_response, build_ping_response
+from tele_secretary.telegram.responses import (
+    build_help_response,
+    build_ping_response,
+    build_remind_usage_response,
+)
 
 
 class TelegramResponseTests(unittest.TestCase):
@@ -17,6 +21,7 @@ class TelegramResponseTests(unittest.TestCase):
         self.assertIn("/done T<number>", response)
         self.assertIn("/reopen T<number>", response)
         self.assertIn("/today", response)
+        self.assertIn("/remind T<number> <time>", response)
         self.assertIn("/list", response)
         self.assertIn("/addtask", response)
         self.assertIn("/show", response)
@@ -64,6 +69,13 @@ class TelegramResponseTests(unittest.TestCase):
         self.assertIn("Unknown help topic: done", unknown_response)
         self.assertIn("Available topics: edit", unknown_response)
         self.assertIn("Use one help topic at a time", multiple_response)
+
+    def test_remind_usage_response_is_concise(self) -> None:
+        response = build_remind_usage_response()
+
+        self.assertIn("Usage: /remind T<number> <time>", response)
+        self.assertIn("/remind T12 tomorrow 2pm", response)
+        self.assertLessEqual(len(response), 4096)
 
 
 if __name__ == "__main__":

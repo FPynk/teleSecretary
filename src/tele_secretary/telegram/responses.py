@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from tele_secretary.app.help import get_help_text
+from tele_secretary.app.reminder_time_parser import ReminderTimeWarning
 from tele_secretary.app.tasks import FocusTaskRecord, TaskRecord
 from tele_secretary.time_utils import utc_to_local
 
@@ -94,6 +95,48 @@ def build_edit_usage_response(error_message: str | None = None) -> str:
 
 def build_edit_error_response(error_message: str) -> str:
     return f"Could not edit task: {error_message}"
+
+
+def build_remind_usage_response() -> str:
+    return "\n".join(
+        [
+            "Usage: /remind T<number> <time>",
+            "Example: /remind T12 tomorrow 2pm",
+        ]
+    )
+
+
+def build_remind_missing_time_response(task: TaskRecord) -> str:
+    return f'When should I remind you about "{task.title}"?'
+
+
+def build_remind_error_response(error_message: str) -> str:
+    return f"Could not set reminder: {error_message}"
+
+
+def build_remind_persistence_error_response() -> str:
+    return "Could not save the reminder. Please try again."
+
+
+def build_reminder_created_response(
+    task: TaskRecord,
+    scheduled_at: str,
+    timezone_name: str,
+    warning: ReminderTimeWarning | None,
+) -> str:
+    localized_time = _format_optional_datetime(scheduled_at, timezone_name)
+    lines = [f'Reminder set for "{task.title}" on {localized_time}.']
+    if warning is ReminderTimeWarning.NONEXISTENT_TIME_MOVED_FORWARD:
+        lines.append(
+            "Note: That local time does not exist because the clocks change, "
+            "so I used the next available time."
+        )
+    elif warning is ReminderTimeWarning.AMBIGUOUS_TIME_FIRST_OCCURRENCE:
+        lines.append(
+            "Note: That local time occurs twice because the clocks change, "
+            "so I used the first occurrence."
+        )
+    return "\n".join(lines)
 
 
 def build_task_not_found_response(task_ref: str) -> str:
