@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-22
+
+- Added atomic, bounded claiming of due reminders for the worker boundary.
+- Claims transition eligible rows from `pending` to `processing` and return
+  owner/task delivery context without performing network I/O.
+
 ## 2026-07-21
 
 - Added owner-scoped reminder creation, retrieval, and pending-listing services.
