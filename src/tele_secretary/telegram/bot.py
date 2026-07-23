@@ -88,12 +88,14 @@ class AddTaskCommandParseError(ValueError):
 
 @dataclass(frozen=True)
 class ParsedRemindCommand:
+    """Telegram command envelope fields for a reminder request."""
+
     task_ref: str
     time_expression: str | None
 
 
 class RemindCommandParseError(ValueError):
-    pass
+    """The `/remind` command envelope is malformed."""
 
 
 def run_bot(config: AppConfig) -> None:
@@ -112,6 +114,7 @@ def run_bot(config: AppConfig) -> None:
 
 
 def build_application(config: AppConfig) -> Any:
+    """Build the configured Telegram application and register its commands."""
     try:
         from telegram.ext import Application, CommandHandler
     except ImportError as exc:
@@ -447,6 +450,7 @@ def _today_handler(config: AppConfig) -> Any:
 
 
 def _remind_handler(config: AppConfig) -> Any:
+    """Build the `/remind` handler for the configured single owner."""
     async def handler(update: Any, context: Any) -> None:
         del context
         if not await _ensure_authorized(update, config):
@@ -526,6 +530,7 @@ def parse_done_command_text(command_text: str) -> str | None:
 
 
 def parse_remind_command_text(command_text: str) -> ParsedRemindCommand:
+    """Separate a `/remind` envelope from its untouched time expression."""
     normalized_command_text = command_text.strip()
     command_parts = normalized_command_text.split(maxsplit=1)
     if len(command_parts) != 2 or REMIND_COMMAND_TOKEN_PATTERN.fullmatch(command_parts[0]) is None:

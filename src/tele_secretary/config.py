@@ -23,6 +23,13 @@ class AppConfig:
     user_timezone: str
     log_level: str
 
+    def __post_init__(self) -> None:
+        """Reject multi-owner configurations unsupported by the application."""
+        if len(self.telegram_allowed_user_ids) > 1:
+            raise ConfigError(
+                "TELEGRAM_ALLOWED_USER_IDS supports at most one Telegram user ID."
+            )
+
     @classmethod
     def from_env(
         cls,

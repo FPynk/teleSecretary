@@ -61,6 +61,7 @@ Examples:
 
 
 def get_help_text(topic: str | None = None) -> str:
+    """Return concise command help or the supported detailed topic."""
     if topic is not None:
         normalized_topic = topic.strip().lower()
         if normalized_topic == "edit":

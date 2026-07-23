@@ -98,6 +98,7 @@ def build_edit_error_response(error_message: str) -> str:
 
 
 def build_remind_usage_response() -> str:
+    """Build guidance for a malformed `/remind` command."""
     return "\n".join(
         [
             "Usage: /remind T<number> <time>",
@@ -107,14 +108,17 @@ def build_remind_usage_response() -> str:
 
 
 def build_remind_missing_time_response(task: TaskRecord) -> str:
+    """Ask for the missing reminder time while naming the resolved task."""
     return f'When should I remind you about "{task.title}"?'
 
 
 def build_remind_error_response(error_message: str) -> str:
+    """Build a safe, user-facing reminder validation failure."""
     return f"Could not set reminder: {error_message}"
 
 
 def build_remind_persistence_error_response() -> str:
+    """Build the generic reminder storage failure response."""
     return "Could not save the reminder. Please try again."
 
 
@@ -124,6 +128,7 @@ def build_reminder_created_response(
     timezone_name: str,
     warning: ReminderTimeWarning | None,
 ) -> str:
+    """Confirm a persisted reminder and include any DST adjustment guidance."""
     localized_time = _format_optional_datetime(scheduled_at, timezone_name)
     lines = [f'Reminder set for "{task.title}" on {localized_time}.']
     if warning is ReminderTimeWarning.NONEXISTENT_TIME_MOVED_FORWARD:
