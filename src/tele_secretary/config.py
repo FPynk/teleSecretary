@@ -24,11 +24,12 @@ class AppConfig:
     log_level: str
 
     def __post_init__(self) -> None:
-        """Reject multi-owner configurations unsupported by the application."""
-        if len(self.telegram_allowed_user_ids) > 1:
-            raise ConfigError(
-                "TELEGRAM_ALLOWED_USER_IDS supports at most one Telegram user ID."
-            )
+        """Normalize duplicate allowlist entries to one authorized identity."""
+        object.__setattr__(
+            self,
+            "telegram_allowed_user_ids",
+            tuple(dict.fromkeys(self.telegram_allowed_user_ids)),
+        )
 
     @classmethod
     def from_env(
@@ -105,7 +106,7 @@ def _parse_allowed_user_ids(raw_value: str) -> tuple[int, ...]:
             raise ConfigError(
                 "TELEGRAM_ALLOWED_USER_IDS must be a comma-separated list of integers."
             ) from exc
-    return tuple(parsed)
+    return tuple(dict.fromkeys(parsed))
 
 
 def _validate_timezone(timezone: str) -> None:

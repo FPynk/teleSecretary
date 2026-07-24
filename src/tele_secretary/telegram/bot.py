@@ -31,7 +31,10 @@ from tele_secretary.app.tasks import (
     list_active_tasks,
     reopen_task,
 )
-from tele_secretary.app.users import get_or_create_telegram_user_id
+from tele_secretary.app.users import (
+    bind_unassigned_legacy_single_owner,
+    get_or_create_telegram_user,
+)
 from tele_secretary.persistence.connection import connect
 from tele_secretary.persistence.migrations import apply_migrations
 from tele_secretary.time_utils import local_to_utc
@@ -105,6 +108,10 @@ def run_bot(config: AppConfig) -> None:
     conn = connect(config.db_path)
     try:
         apply_migrations(conn)
+        bind_unassigned_legacy_single_owner(
+            conn,
+            allowed_telegram_user_ids=config.telegram_allowed_user_ids,
+        )
     finally:
         conn.close()
 
@@ -140,7 +147,9 @@ def build_application(config: AppConfig) -> Any:
 def _ping_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        if await _get_authorized_telegram_user_id(update, config) is None:
+            return
+        if update.message is None:
             return
         await update.message.reply_text(build_ping_response())
 
@@ -150,7 +159,7 @@ def _ping_handler(config: AppConfig) -> Any:
 def _help_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        if await _get_authorized_telegram_user_id(update, config) is None:
             return
         if update.message is None:
             return
@@ -164,19 +173,20 @@ def _help_handler(config: AppConfig) -> Any:
 def _list_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
             return
-        if update.message is None or update.effective_user is None:
+        if update.message is None:
             return
 
         conn = connect(config.db_path)
         try:
-            user_id = get_or_create_telegram_user_id(
+            user = get_or_create_telegram_user(
                 conn,
-                telegram_user_id=config.telegram_allowed_user_ids[0],
-                timezone=config.user_timezone,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
             )
-            tasks = list_active_tasks(conn, user_id=user_id)
+            tasks = list_active_tasks(conn, user_id=user.user_id)
         finally:
             conn.close()
 
@@ -188,37 +198,40 @@ def _list_handler(config: AppConfig) -> Any:
 def _addtask_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
             return
-        if update.message is None or update.effective_user is None:
+        if update.message is None:
             return
 
         command_text = update.message.text or ""
-        try:
-            parsed_command = parse_addtask_command_text(command_text, config.user_timezone)
-        except AddTaskCommandParseError:
-            await update.message.reply_text(build_addtask_usage_response())
-            return
-
         conn = connect(config.db_path)
         try:
-            user_id = get_or_create_telegram_user_id(
+            user = get_or_create_telegram_user(
                 conn,
-                telegram_user_id=config.telegram_allowed_user_ids[0],
-                timezone=config.user_timezone,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
             )
-            task = create_task(
-                conn,
-                user_id=user_id,
-                title=parsed_command.title,
-                source="telegram_command",
-                deadline_at=parsed_command.deadline_at,
-                deadline_type="hard" if parsed_command.deadline_at is not None else None,
-                raw_input_text=command_text,
-            )
+            try:
+                parsed_command = parse_addtask_command_text(command_text, user.timezone)
+            except AddTaskCommandParseError:
+                task = None
+            else:
+                task = create_task(
+                    conn,
+                    user_id=user.user_id,
+                    title=parsed_command.title,
+                    source="telegram_command",
+                    deadline_at=parsed_command.deadline_at,
+                    deadline_type="hard" if parsed_command.deadline_at is not None else None,
+                    raw_input_text=command_text,
+                )
         finally:
             conn.close()
 
+        if task is None:
+            await update.message.reply_text(build_addtask_usage_response())
+            return
         await update.message.reply_text(
             build_task_created_response(task, parsed_command.due_date_text)
         )
@@ -229,38 +242,37 @@ def _addtask_handler(config: AppConfig) -> Any:
 def _show_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
             return
-        if update.message is None or update.effective_user is None:
-            return
-
-        task_ref = parse_show_command_text(update.message.text or "")
-        if task_ref is None:
-            await update.message.reply_text(build_show_usage_response())
+        if update.message is None:
             return
 
         conn = connect(config.db_path)
         try:
-            user_id = get_or_create_telegram_user_id(
+            user = get_or_create_telegram_user(
                 conn,
-                telegram_user_id=config.telegram_allowed_user_ids[0],
-                timezone=config.user_timezone,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
             )
-            try:
-                task = get_task_details_by_ref(
-                    conn,
-                    user_id=user_id,
-                    task_ref=task_ref,
-                )
-            except TaskNotFoundError:
-                await update.message.reply_text(build_task_not_found_response(task_ref))
-                return
+            task_ref = parse_show_command_text(update.message.text or "")
+            if task_ref is None:
+                response = build_show_usage_response()
+            else:
+                try:
+                    task = get_task_details_by_ref(
+                        conn,
+                        user_id=user.user_id,
+                        task_ref=task_ref,
+                    )
+                except TaskNotFoundError:
+                    response = build_task_not_found_response(task_ref)
+                else:
+                    response = build_task_details_response(task, user.timezone)
         finally:
             conn.close()
 
-        await update.message.reply_text(
-            build_task_details_response(task, config.user_timezone)
-        )
+        await update.message.reply_text(response)
 
     return handler
 
@@ -268,9 +280,10 @@ def _show_handler(config: AppConfig) -> Any:
 def _edit_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
             return
-        if update.message is None or update.effective_user is None:
+        if update.message is None:
             return
 
         command_parts = (update.message.text or "").strip().split()
@@ -278,53 +291,48 @@ def _edit_handler(config: AppConfig) -> Any:
             await update.message.reply_text(build_help_response("edit"))
             return
 
-        try:
-            parsed_command = parse_edit_task_command_text(
-                update.message.text or "",
-                config.user_timezone,
-            )
-        except EditTaskCommandParseError as exc:
-            await update.message.reply_text(build_edit_usage_response(str(exc)))
-            return
-
         conn = connect(config.db_path)
         try:
-            user_id = get_or_create_telegram_user_id(
+            user = get_or_create_telegram_user(
                 conn,
-                telegram_user_id=config.telegram_allowed_user_ids[0],
-                timezone=config.user_timezone,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
             )
             try:
-                task = edit_task_by_ref(
-                    conn,
-                    user_id=user_id,
-                    task_ref=parsed_command.task_ref,
-                    source="telegram_command",
-                    task_field_updates=parsed_command.task_field_updates,
-                    category_was_provided=parsed_command.category_was_provided,
-                    category_name=parsed_command.category_name,
-                    add_tag_names=parsed_command.add_tag_names,
-                    remove_tag_names=parsed_command.remove_tag_names,
-                    clear_tags=parsed_command.clear_tags,
+                parsed_command = parse_edit_task_command_text(
+                    update.message.text or "",
+                    user.timezone,
                 )
-            except TaskNotFoundError:
-                await update.message.reply_text(
-                    build_task_not_found_response(parsed_command.task_ref)
-                )
-                return
-            except TaskValidationError as exc:
-                await update.message.reply_text(build_edit_error_response(exc.message))
-                return
+            except EditTaskCommandParseError as exc:
+                response = build_edit_usage_response(str(exc))
+            else:
+                try:
+                    task = edit_task_by_ref(
+                        conn,
+                        user_id=user.user_id,
+                        task_ref=parsed_command.task_ref,
+                        source="telegram_command",
+                        task_field_updates=parsed_command.task_field_updates,
+                        category_was_provided=parsed_command.category_was_provided,
+                        category_name=parsed_command.category_name,
+                        add_tag_names=parsed_command.add_tag_names,
+                        remove_tag_names=parsed_command.remove_tag_names,
+                        clear_tags=parsed_command.clear_tags,
+                    )
+                except TaskNotFoundError:
+                    response = build_task_not_found_response(parsed_command.task_ref)
+                except TaskValidationError as exc:
+                    response = build_edit_error_response(exc.message)
+                else:
+                    response = build_task_updated_response(
+                        task,
+                        user.timezone,
+                        parsed_command.changed_fields,
+                    )
         finally:
             conn.close()
 
-        await update.message.reply_text(
-            build_task_updated_response(
-                task,
-                config.user_timezone,
-                parsed_command.changed_fields,
-            )
-        )
+        await update.message.reply_text(response)
 
     return handler
 
@@ -332,45 +340,45 @@ def _edit_handler(config: AppConfig) -> Any:
 def _reopen_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
             return
-        if update.message is None or update.effective_user is None:
-            return
-
-        task_ref = parse_reopen_command_text(update.message.text or "")
-        if task_ref is None:
-            await update.message.reply_text(build_reopen_usage_response())
+        if update.message is None:
             return
 
         conn = connect(config.db_path)
         try:
-            user_id = get_or_create_telegram_user_id(
+            user = get_or_create_telegram_user(
                 conn,
-                telegram_user_id=config.telegram_allowed_user_ids[0],
-                timezone=config.user_timezone,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
             )
-            try:
-                task = get_task_details_by_ref(
-                    conn,
-                    user_id=user_id,
-                    task_ref=task_ref,
-                )
-                task = reopen_task(
-                    conn,
-                    user_id=user_id,
-                    task_id=task.id,
-                    source="telegram_command",
-                )
-            except TaskNotFoundError:
-                await update.message.reply_text(build_task_not_found_response(task_ref))
-                return
-            except TaskValidationError as exc:
-                await update.message.reply_text(build_reopen_error_response(exc.message))
-                return
+            task_ref = parse_reopen_command_text(update.message.text or "")
+            if task_ref is None:
+                response = build_reopen_usage_response()
+            else:
+                try:
+                    task = get_task_details_by_ref(
+                        conn,
+                        user_id=user.user_id,
+                        task_ref=task_ref,
+                    )
+                    task = reopen_task(
+                        conn,
+                        user_id=user.user_id,
+                        task_id=task.id,
+                        source="telegram_command",
+                    )
+                except TaskNotFoundError:
+                    response = build_task_not_found_response(task_ref)
+                except TaskValidationError as exc:
+                    response = build_reopen_error_response(exc.message)
+                else:
+                    response = build_task_reopened_response(task)
         finally:
             conn.close()
 
-        await update.message.reply_text(build_task_reopened_response(task))
+        await update.message.reply_text(response)
 
     return handler
 
@@ -378,45 +386,45 @@ def _reopen_handler(config: AppConfig) -> Any:
 def _done_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
             return
-        if update.message is None or update.effective_user is None:
-            return
-
-        task_ref = parse_done_command_text(update.message.text or "")
-        if task_ref is None:
-            await update.message.reply_text(build_done_usage_response())
+        if update.message is None:
             return
 
         conn = connect(config.db_path)
         try:
-            user_id = get_or_create_telegram_user_id(
+            user = get_or_create_telegram_user(
                 conn,
-                telegram_user_id=config.telegram_allowed_user_ids[0],
-                timezone=config.user_timezone,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
             )
-            try:
-                task = get_task_details_by_ref(
-                    conn,
-                    user_id=user_id,
-                    task_ref=task_ref,
-                )
-                task = complete_task(
-                    conn,
-                    user_id=user_id,
-                    task_id=task.id,
-                    source="telegram_command",
-                )
-            except TaskNotFoundError:
-                await update.message.reply_text(build_task_not_found_response(task_ref))
-                return
-            except TaskValidationError as exc:
-                await update.message.reply_text(build_done_error_response(exc.message))
-                return
+            task_ref = parse_done_command_text(update.message.text or "")
+            if task_ref is None:
+                response = build_done_usage_response()
+            else:
+                try:
+                    task = get_task_details_by_ref(
+                        conn,
+                        user_id=user.user_id,
+                        task_ref=task_ref,
+                    )
+                    task = complete_task(
+                        conn,
+                        user_id=user.user_id,
+                        task_id=task.id,
+                        source="telegram_command",
+                    )
+                except TaskNotFoundError:
+                    response = build_task_not_found_response(task_ref)
+                except TaskValidationError as exc:
+                    response = build_done_error_response(exc.message)
+                else:
+                    response = build_task_completed_response(task)
         finally:
             conn.close()
 
-        await update.message.reply_text(build_task_completed_response(task))
+        await update.message.reply_text(response)
 
     return handler
 
@@ -424,22 +432,23 @@ def _done_handler(config: AppConfig) -> Any:
 def _today_handler(config: AppConfig) -> Any:
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
             return
-        if update.message is None or update.effective_user is None:
+        if update.message is None:
             return
 
         conn = connect(config.db_path)
         try:
-            user_id = get_or_create_telegram_user_id(
+            user = get_or_create_telegram_user(
                 conn,
-                telegram_user_id=config.telegram_allowed_user_ids[0],
-                timezone=config.user_timezone,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
             )
             focus_tasks = get_focus_today(
                 conn,
-                user_id=user_id,
-                timezone_name=config.user_timezone,
+                user_id=user.user_id,
+                timezone_name=user.timezone,
             )
         finally:
             conn.close()
@@ -450,62 +459,63 @@ def _today_handler(config: AppConfig) -> Any:
 
 
 def _remind_handler(config: AppConfig) -> Any:
-    """Build the `/remind` handler for the configured single owner."""
+    """Build the `/remind` handler for each authorized Telegram owner."""
     async def handler(update: Any, context: Any) -> None:
         del context
-        if not await _ensure_authorized(update, config):
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
             return
-        if update.message is None or update.effective_user is None:
-            return
-
-        try:
-            command = parse_remind_command_text(update.message.text or "")
-        except RemindCommandParseError:
-            await update.message.reply_text(build_remind_usage_response())
+        if update.message is None:
             return
 
         conn = connect(config.db_path)
         try:
-            user_id = get_or_create_telegram_user_id(
+            user = get_or_create_telegram_user(
                 conn,
-                telegram_user_id=config.telegram_allowed_user_ids[0],
-                timezone=config.user_timezone,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
             )
-            task = get_task_details_by_ref(
-                conn,
-                user_id=user_id,
-                task_ref=command.task_ref,
-            )
-            if command.time_expression is None:
-                response = build_remind_missing_time_response(task)
+            try:
+                command = parse_remind_command_text(update.message.text or "")
+            except RemindCommandParseError:
+                response = build_remind_usage_response()
             else:
-                parsed_time: ParsedReminderTime = parse_reminder_time_expression(
-                    command.time_expression,
-                    config.user_timezone,
-                )
-                reminder = create_reminder(
-                    conn,
-                    user_id=user_id,
-                    task_id=task.id,
-                    scheduled_at=parsed_time.scheduled_at,
-                )
-                response = build_reminder_created_response(
-                    task,
-                    reminder.scheduled_at,
-                    config.user_timezone,
-                    parsed_time.warning,
-                )
-        except TaskNotFoundError:
-            response = build_task_not_found_response(command.task_ref)
-        except ReminderTimeParseError as error:
-            response = build_remind_error_response(str(error))
-        except ReminderNotFoundError:
-            response = build_task_not_found_response(command.task_ref)
-        except ReminderServiceError as error:
-            response = build_remind_error_response(error.message)
-        except sqlite3.Error:
-            LOGGER.exception("Could not persist reminder for %s", command.task_ref)
-            response = build_remind_persistence_error_response()
+                try:
+                    task = get_task_details_by_ref(
+                        conn,
+                        user_id=user.user_id,
+                        task_ref=command.task_ref,
+                    )
+                    if command.time_expression is None:
+                        response = build_remind_missing_time_response(task)
+                    else:
+                        parsed_time: ParsedReminderTime = parse_reminder_time_expression(
+                            command.time_expression,
+                            user.timezone,
+                        )
+                        reminder = create_reminder(
+                            conn,
+                            user_id=user.user_id,
+                            task_id=task.id,
+                            scheduled_at=parsed_time.scheduled_at,
+                        )
+                        response = build_reminder_created_response(
+                            task,
+                            reminder.scheduled_at,
+                            user.timezone,
+                            parsed_time.warning,
+                        )
+                except TaskNotFoundError:
+                    response = build_task_not_found_response(command.task_ref)
+                except ReminderTimeParseError as error:
+                    response = build_remind_error_response(str(error))
+                except ReminderNotFoundError:
+                    response = build_task_not_found_response(command.task_ref)
+                except ReminderServiceError as error:
+                    response = build_remind_error_response(error.message)
+                except sqlite3.Error:
+                    LOGGER.exception("Could not persist reminder for %s", command.task_ref)
+                    response = build_remind_persistence_error_response()
         finally:
             conn.close()
 
@@ -594,17 +604,21 @@ def parse_addtask_command_text(command_text: str, timezone_name: str) -> ParsedA
     )
 
 
-async def _ensure_authorized(update: Any, config: AppConfig) -> bool:
+async def _get_authorized_telegram_user_id(
+    update: Any,
+    config: AppConfig,
+) -> int | None:
+    """Return the authorized sender ID without touching persistent identity data."""
     allowed_ids = config.telegram_allowed_user_ids
     if not allowed_ids:
         if update.message is not None:
             await update.message.reply_text(build_task_owner_not_configured_response())
-        return False
+        return None
 
     user = update.effective_user
     if user is not None and user.id in allowed_ids:
-        return True
+        return user.id
 
     if update.message is not None:
         await update.message.reply_text(build_unauthorized_response())
-    return False
+    return None
