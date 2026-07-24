@@ -209,6 +209,7 @@ def cancel_pending_reminder(
     reminder_id: str,
     cancelled_at: datetime | None = None,
 ) -> ReminderCancellationResult:
+    """Cancel one owned pending reminder while keeping repeated calls idempotent."""
     cancelled_at_text = _normalize_cancellation_time(cancelled_at or utc_now())
     _require_no_active_transaction(conn, "cancel_pending_reminder")
 
@@ -257,6 +258,7 @@ def cancel_selected_pending_reminders(
     reminder_ids: tuple[str, ...],
     cancelled_at: datetime | None = None,
 ) -> tuple[ReminderRecord, ...]:
+    """Atomically cancel the exact pending reminders selected for an owned task."""
     _validate_selected_reminder_ids(reminder_ids)
     cancelled_at_text = _normalize_cancellation_time(cancelled_at or utc_now())
     _require_no_active_transaction(conn, "cancel_selected_pending_reminders")
@@ -327,6 +329,7 @@ def cancel_all_future_pending_reminders_for_task(
     task_id: str,
     now: datetime | None = None,
 ) -> tuple[ReminderRecord, ...]:
+    """Cancel an owned task's pending reminders scheduled after the supplied time."""
     cancellation_time_text = _normalize_cancellation_time(now or utc_now())
     _require_no_active_transaction(conn, "cancel_all_future_pending_reminders_for_task")
 
