@@ -2,6 +2,11 @@
 
 ## 2026-07-22
 
+- Added `/remind T<number> <time>` for owner-scoped, deterministic reminder
+  creation through Telegram.
+- Confirmations display the persisted local schedule and give one creation-time
+  daylight-saving note when a requested local time is adjusted or ambiguous.
+
 - Added atomic, bounded claiming of due reminders for the worker boundary.
 - Claims transition eligible rows from `pending` to `processing` and return
   owner/task delivery context without performing network I/O.

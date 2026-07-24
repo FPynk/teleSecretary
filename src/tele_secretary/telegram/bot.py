@@ -6,9 +6,20 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 import re
+import sqlite3
 from typing import Any
 
 from tele_secretary.config import AppConfig
+from tele_secretary.app.reminder_time_parser import (
+    ParsedReminderTime,
+    ReminderTimeParseError,
+    parse_reminder_time_expression,
+)
+from tele_secretary.app.reminders import (
+    ReminderNotFoundError,
+    ReminderServiceError,
+    create_reminder,
+)
 from tele_secretary.app.tasks import (
     TaskNotFoundError,
     TaskValidationError,
@@ -36,6 +47,11 @@ from tele_secretary.telegram.responses import (
     build_edit_usage_response,
     build_help_response,
     build_ping_response,
+    build_remind_error_response,
+    build_remind_missing_time_response,
+    build_remind_persistence_error_response,
+    build_remind_usage_response,
+    build_reminder_created_response,
     build_reopen_error_response,
     build_reopen_usage_response,
     build_task_reopened_response,
@@ -56,6 +72,7 @@ ADD_TASK_DUE_DATE_PATTERN = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 ADD_TASK_DUE_FLAG_PATTERN = re.compile(r"(?<!\S)-due(?!\S)")
 ADD_TASK_DUE_LIKE_PATTERN = re.compile(r"(?<!\S)-{1,2}due")
 TASK_REF_PATTERN = re.compile(r"T[1-9]\d*", re.IGNORECASE)
+REMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/remind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -67,6 +84,18 @@ class ParsedAddTaskCommand:
 
 class AddTaskCommandParseError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class ParsedRemindCommand:
+    """Telegram command envelope fields for a reminder request."""
+
+    task_ref: str
+    time_expression: str | None
+
+
+class RemindCommandParseError(ValueError):
+    """The `/remind` command envelope is malformed."""
 
 
 def run_bot(config: AppConfig) -> None:
@@ -85,6 +114,7 @@ def run_bot(config: AppConfig) -> None:
 
 
 def build_application(config: AppConfig) -> Any:
+    """Build the configured Telegram application and register its commands."""
     try:
         from telegram.ext import Application, CommandHandler
     except ImportError as exc:
@@ -103,6 +133,7 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("done", _done_handler(config)))
     application.add_handler(CommandHandler("reopen", _reopen_handler(config)))
     application.add_handler(CommandHandler("today", _today_handler(config)))
+    application.add_handler(CommandHandler("remind", _remind_handler(config)))
     return application
 
 
@@ -418,6 +449,71 @@ def _today_handler(config: AppConfig) -> Any:
     return handler
 
 
+def _remind_handler(config: AppConfig) -> Any:
+    """Build the `/remind` handler for the configured single owner."""
+    async def handler(update: Any, context: Any) -> None:
+        del context
+        if not await _ensure_authorized(update, config):
+            return
+        if update.message is None or update.effective_user is None:
+            return
+
+        try:
+            command = parse_remind_command_text(update.message.text or "")
+        except RemindCommandParseError:
+            await update.message.reply_text(build_remind_usage_response())
+            return
+
+        conn = connect(config.db_path)
+        try:
+            user_id = get_or_create_telegram_user_id(
+                conn,
+                telegram_user_id=config.telegram_allowed_user_ids[0],
+                timezone=config.user_timezone,
+            )
+            task = get_task_details_by_ref(
+                conn,
+                user_id=user_id,
+                task_ref=command.task_ref,
+            )
+            if command.time_expression is None:
+                response = build_remind_missing_time_response(task)
+            else:
+                parsed_time: ParsedReminderTime = parse_reminder_time_expression(
+                    command.time_expression,
+                    config.user_timezone,
+                )
+                reminder = create_reminder(
+                    conn,
+                    user_id=user_id,
+                    task_id=task.id,
+                    scheduled_at=parsed_time.scheduled_at,
+                )
+                response = build_reminder_created_response(
+                    task,
+                    reminder.scheduled_at,
+                    config.user_timezone,
+                    parsed_time.warning,
+                )
+        except TaskNotFoundError:
+            response = build_task_not_found_response(command.task_ref)
+        except ReminderTimeParseError as error:
+            response = build_remind_error_response(str(error))
+        except ReminderNotFoundError:
+            response = build_task_not_found_response(command.task_ref)
+        except ReminderServiceError as error:
+            response = build_remind_error_response(error.message)
+        except sqlite3.Error:
+            LOGGER.exception("Could not persist reminder for %s", command.task_ref)
+            response = build_remind_persistence_error_response()
+        finally:
+            conn.close()
+
+        await update.message.reply_text(response)
+
+    return handler
+
+
 def parse_show_command_text(command_text: str) -> str | None:
     command_parts = command_text.strip().split()
     if len(command_parts) != 2 or TASK_REF_PATTERN.fullmatch(command_parts[1]) is None:
@@ -431,6 +527,25 @@ def parse_reopen_command_text(command_text: str) -> str | None:
 
 def parse_done_command_text(command_text: str) -> str | None:
     return parse_show_command_text(command_text)
+
+
+def parse_remind_command_text(command_text: str) -> ParsedRemindCommand:
+    """Separate a `/remind` envelope from its untouched time expression."""
+    normalized_command_text = command_text.strip()
+    command_parts = normalized_command_text.split(maxsplit=1)
+    if len(command_parts) != 2 or REMIND_COMMAND_TOKEN_PATTERN.fullmatch(command_parts[0]) is None:
+        raise RemindCommandParseError("Remind command requires a task reference.")
+
+    remaining_text = command_parts[1]
+    task_ref_match = re.match(r"T[1-9]\d*(?=$|\s)", remaining_text, re.IGNORECASE)
+    if task_ref_match is None:
+        raise RemindCommandParseError("Remind command has an invalid task reference.")
+
+    time_expression = remaining_text[task_ref_match.end() :].lstrip()
+    return ParsedRemindCommand(
+        task_ref=task_ref_match.group().upper(),
+        time_expression=time_expression or None,
+    )
 
 
 def parse_addtask_command_text(command_text: str, timezone_name: str) -> ParsedAddTaskCommand:
