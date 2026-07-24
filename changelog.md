@@ -7,6 +7,10 @@
   timezone.
 - Added an idempotent startup binding for legacy `single-owner` data without
   rewriting its linked records.
+- Added owner-scoped reminder cancellation services for one pending reminder,
+  a strict selected set, and all future pending reminders on a task.
+- Cancellation is atomic against due-reminder claims, records a canonical UTC
+  cancellation timestamp, and keeps terminal reminder history unchanged.
 
 ## 2026-07-22
 
