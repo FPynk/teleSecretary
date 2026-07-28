@@ -37,8 +37,8 @@ natural-language parsing, and LLM integration are later phases.
 - `/remind T<number> <time>` - set a task reminder
 
 `/remind` accepts deterministic V1 times such as `tomorrow 2pm`, `fri 14:30`,
-and `25/07/2026 2:30 PM`. Expressions and confirmation times use the configured
-IANA user timezone; reminders are stored in UTC.
+and `25/07/2026 2:30 PM`. Expressions and confirmation times use each owner's
+persisted IANA timezone; reminders are stored in UTC.
 
 ## Local Setup
 
@@ -52,11 +52,14 @@ cp .env.example .env
 ```
 
 Fill in `TELEGRAM_BOT_TOKEN` in `.env` before starting the bot. Set
-`TELEGRAM_ALLOWED_USER_IDS` to your Telegram user ID. If it is empty, Telegram
-commands are disabled.
+`TELEGRAM_ALLOWED_USER_IDS` to one or more comma-separated Telegram user IDs.
+If it is empty, Telegram commands are disabled. Each configured ID is an
+independent owner with isolated tasks, references, reminders, and persisted
+timezone; allowlist order has no runtime ownership meaning.
 
-TeleSecretary is currently single-user. Configure one Telegram ID in
-`TELEGRAM_ALLOWED_USER_IDS`; it is the task and reminder owner.
+`SECRETARY_USER_TIMEZONE` is the default for newly created users. An existing
+user's persisted timezone is used for parsing and rendering and is not changed
+by later environment updates.
 
 The bot applies pending migrations once during startup. Individual Telegram
 command handlers assume the database schema is already ready.

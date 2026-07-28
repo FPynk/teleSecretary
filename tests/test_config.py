@@ -9,17 +9,17 @@ from tele_secretary.config import AppConfig, ConfigError, load_env_file
 
 
 class ConfigTests(unittest.TestCase):
-    def test_config_loads_defaults_and_one_allowed_user(self) -> None:
+    def test_config_loads_defaults_and_normalizes_allowed_user_ids(self) -> None:
         config = AppConfig.from_env(
             {
-                "TELEGRAM_ALLOWED_USER_IDS": "123",
+                "TELEGRAM_ALLOWED_USER_IDS": "123, 456, 123",
                 "SECRETARY_DATA_DIR": "./tmp-data",
                 "SECRETARY_LOG_DIR": "./tmp-logs",
                 "SECRETARY_USER_TIMEZONE": "America/Chicago",
             }
         )
 
-        self.assertEqual(config.telegram_allowed_user_ids, (123,))
+        self.assertEqual(config.telegram_allowed_user_ids, (123, 456))
         self.assertEqual(config.db_path, Path("tmp-data") / "secretary.sqlite3")
         self.assertEqual(config.log_level, "INFO")
 
@@ -27,9 +27,18 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             AppConfig.from_env({}, require_bot_token=True)
 
-    def test_multiple_allowed_user_ids_are_rejected(self) -> None:
-        with self.assertRaisesRegex(ConfigError, "at most one Telegram user ID"):
-            AppConfig.from_env({"TELEGRAM_ALLOWED_USER_IDS": "123, 456"})
+    def test_direct_config_construction_normalizes_duplicate_allowed_ids(self) -> None:
+        config = AppConfig(
+            telegram_bot_token=None,
+            telegram_allowed_user_ids=(123, 456, 123),
+            data_dir=Path("data"),
+            log_dir=Path("logs"),
+            db_path=Path("data") / "secretary.sqlite3",
+            user_timezone="America/Chicago",
+            log_level="INFO",
+        )
+
+        self.assertEqual(config.telegram_allowed_user_ids, (123, 456))
 
     def test_invalid_timezone_is_rejected(self) -> None:
         with self.assertRaises(ConfigError):

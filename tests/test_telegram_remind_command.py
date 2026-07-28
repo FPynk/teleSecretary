@@ -72,12 +72,16 @@ class RemindCommandParserTests(unittest.TestCase):
 
 
 class TelegramRemindCommandTests(unittest.IsolatedAsyncioTestCase):
-    async def test_invalid_envelope_and_unauthorized_callers_do_not_open_a_database(self) -> None:
+    async def test_invalid_envelope_creates_an_authorized_user_but_unauthorized_callers_do_not_open_a_database(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             invalid_config = self.build_config(root / "invalid")
+            with open_test_database(invalid_config.db_path) as conn:
+                apply_migrations(conn)
             invalid_update = self.build_update("/remind 1 tomorrow")
             await _remind_handler(invalid_config)(invalid_update, SimpleNamespace())
+            with open_test_database(invalid_config.db_path) as conn:
+                invalid_user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
             unconfigured_config = self.build_config(root / "unconfigured", allowed_user_ids=())
             unconfigured_update = self.build_update("/remind T1 tomorrow")
@@ -88,6 +92,7 @@ class TelegramRemindCommandTests(unittest.IsolatedAsyncioTestCase):
             await _remind_handler(unauthorized_config)(unauthorized_update, SimpleNamespace())
 
         self.assertEqual(invalid_update.message.replies, [build_remind_usage_response()])
+        self.assertEqual(invalid_user_count, 1)
         self.assertEqual(
             unconfigured_update.message.replies,
             [

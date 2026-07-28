@@ -138,7 +138,7 @@ erDiagram
 
 ## Important Constraints
 
-- `users.telegram_user_id` is unique.
+- `users.telegram_user_id` is unique and identifies one independent Telegram owner when present.
 - `tags` are unique per user by `(user_id, name)`.
 - Active category names are unique per user while `archived_at IS NULL`.
 - `items.item_type` is either `task` or `note`.
@@ -181,14 +181,15 @@ otherwise, application timestamps are stored as UTC ISO 8601 text.
 
 ### `users`
 
-One row represents one TeleSecretary user and owns that user's items,
-vocabulary, and public-reference sequences.
+One row represents one independent TeleSecretary owner and owns that user's
+items, vocabulary, and public-reference sequences. An allowlisted Telegram
+sender maps to one row; users do not share rows or public-reference sequences.
 
 | Column | Semantic meaning |
 | --- | --- |
 | `id` | Stable internal user identifier referenced by all user-owned records. This is not shown to the user. |
-| `telegram_user_id` | Telegram's numeric identifier for the person. It connects an incoming Telegram account to this internal user and is unique when present. |
-| `timezone` | IANA timezone used to interpret user-entered dates and times and to localize stored UTC timestamps for display, for example `America/Chicago`. |
+| `telegram_user_id` | Telegram's numeric identifier for one independent owner. It connects one incoming Telegram account to this internal user and is unique when present. |
+| `timezone` | The owner's persisted IANA timezone used to interpret user-entered dates and times and to localize stored UTC timestamps for display, for example `America/Chicago`. |
 | `created_at` | When the user row was first created. Foundation rows use SQLite's UTC `CURRENT_TIMESTAMP`. |
 | `updated_at` | When the user row was most recently updated. |
 

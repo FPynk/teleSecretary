@@ -2,6 +2,11 @@
 
 ## 2026-07-23
 
+- Added independent multi-user Telegram ownership: every authorized sender now
+  resolves to their own stable user row, owner-scoped data, and persisted
+  timezone.
+- Added an idempotent startup binding for legacy `single-owner` data without
+  rewriting its linked records.
 - Added owner-scoped reminder cancellation services for one pending reminder,
   a strict selected set, and all future pending reminders on a task.
 - Cancellation is atomic against due-reminder claims, records a canonical UTC
