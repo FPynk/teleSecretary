@@ -109,6 +109,7 @@ def run_bot(config: AppConfig) -> None:
     conn = connect(config.db_path)
     try:
         apply_migrations(conn)
+        # TSEC-39: Remove this one-time legacy binding after the upgrade window closes.
         bind_unassigned_legacy_single_owner(
             conn,
             allowed_telegram_user_ids=config.telegram_allowed_user_ids,

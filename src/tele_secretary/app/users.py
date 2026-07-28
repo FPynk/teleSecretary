@@ -61,6 +61,7 @@ def bind_unassigned_legacy_single_owner(
     allowed_telegram_user_ids: tuple[int, ...],
 ) -> TelegramUserRecord | None:
     """Bind an unassigned legacy owner to the first configured allowlist entry once."""
+    # TSEC-39: Remove this compatibility path after the legacy upgrade window closes.
     if conn.in_transaction:
         raise RuntimeError(
             "bind_unassigned_legacy_single_owner requires a connection without an active transaction."
