@@ -38,6 +38,7 @@ class AppConfig:
         *,
         require_bot_token: bool = False,
     ) -> "AppConfig":
+        """Build validated configuration from a mapping of environment values."""
         values = env if env is not None else os.environ
 
         data_dir = Path(values.get("SECRETARY_DATA_DIR", "./data")).expanduser()
@@ -71,6 +72,7 @@ def load_config(
     env_file: Path | None = None,
     require_bot_token: bool = False,
 ) -> AppConfig:
+    """Load application configuration from the environment and an optional env file."""
     env = dict(os.environ)
     if env_file is not None and env_file.exists():
         env.update(load_env_file(env_file))
@@ -78,6 +80,7 @@ def load_config(
 
 
 def load_env_file(path: Path) -> dict[str, str]:
+    """Read simple KEY=VALUE entries while ignoring blank lines and comments."""
     values: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -91,6 +94,7 @@ def load_env_file(path: Path) -> dict[str, str]:
 
 
 def _parse_allowed_user_ids(raw_value: str) -> tuple[int, ...]:
+    """Parse a comma-separated Telegram allowlist and discard duplicate IDs."""
     raw_value = raw_value.strip()
     if not raw_value:
         return ()
@@ -110,6 +114,7 @@ def _parse_allowed_user_ids(raw_value: str) -> tuple[int, ...]:
 
 
 def _validate_timezone(timezone: str) -> None:
+    """Raise a configuration error unless the named IANA timezone is available."""
     if not timezone:
         raise ConfigError("SECRETARY_USER_TIMEZONE cannot be empty.")
     try:

@@ -102,6 +102,7 @@ class RemindCommandParseError(ValueError):
 
 
 def run_bot(config: AppConfig) -> None:
+    """Apply migrations and start the configured Telegram bot."""
     if not config.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required to start the bot.")
 
@@ -145,7 +146,9 @@ def build_application(config: AppConfig) -> Any:
 
 
 def _ping_handler(config: AppConfig) -> Any:
+    """Build the authorized `/ping` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """Reply with the service-health response for an authorized sender."""
         del context
         if await _get_authorized_telegram_user_id(update, config) is None:
             return
@@ -157,7 +160,9 @@ def _ping_handler(config: AppConfig) -> Any:
 
 
 def _help_handler(config: AppConfig) -> Any:
+    """Build the authorized `/help` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """Reply with general or topic-specific help for an authorized sender."""
         del context
         if await _get_authorized_telegram_user_id(update, config) is None:
             return
@@ -171,7 +176,9 @@ def _help_handler(config: AppConfig) -> Any:
 
 
 def _list_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/list` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """List active tasks belonging to the authorized sender."""
         del context
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
@@ -196,7 +203,9 @@ def _list_handler(config: AppConfig) -> Any:
 
 
 def _addtask_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/addtask` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """Create a task using the authorized sender's persisted timezone."""
         del context
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
@@ -240,7 +249,9 @@ def _addtask_handler(config: AppConfig) -> Any:
 
 
 def _show_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/show` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """Show a task only when it belongs to the authorized sender."""
         del context
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
@@ -278,7 +289,9 @@ def _show_handler(config: AppConfig) -> Any:
 
 
 def _edit_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/edit` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """Edit a task using the authorized sender's persisted timezone."""
         del context
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
@@ -338,7 +351,9 @@ def _edit_handler(config: AppConfig) -> Any:
 
 
 def _reopen_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/reopen` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """Reopen a task only when it belongs to the authorized sender."""
         del context
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
@@ -384,7 +399,9 @@ def _reopen_handler(config: AppConfig) -> Any:
 
 
 def _done_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/done` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """Complete a task only when it belongs to the authorized sender."""
         del context
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
@@ -430,7 +447,9 @@ def _done_handler(config: AppConfig) -> Any:
 
 
 def _today_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/today` command handler."""
     async def handler(update: Any, context: Any) -> None:
+        """List today's tasks using the authorized sender's persisted timezone."""
         del context
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
@@ -461,6 +480,7 @@ def _today_handler(config: AppConfig) -> Any:
 def _remind_handler(config: AppConfig) -> Any:
     """Build the `/remind` handler for each authorized Telegram owner."""
     async def handler(update: Any, context: Any) -> None:
+        """Create an owner-scoped reminder using the sender's persisted timezone."""
         del context
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
@@ -525,6 +545,7 @@ def _remind_handler(config: AppConfig) -> Any:
 
 
 def parse_show_command_text(command_text: str) -> str | None:
+    """Parse a task reference from a `/show` command."""
     command_parts = command_text.strip().split()
     if len(command_parts) != 2 or TASK_REF_PATTERN.fullmatch(command_parts[1]) is None:
         return None
@@ -532,10 +553,12 @@ def parse_show_command_text(command_text: str) -> str | None:
 
 
 def parse_reopen_command_text(command_text: str) -> str | None:
+    """Parse a task reference from a `/reopen` command."""
     return parse_show_command_text(command_text)
 
 
 def parse_done_command_text(command_text: str) -> str | None:
+    """Parse a task reference from a `/done` command."""
     return parse_show_command_text(command_text)
 
 
@@ -559,6 +582,7 @@ def parse_remind_command_text(command_text: str) -> ParsedRemindCommand:
 
 
 def parse_addtask_command_text(command_text: str, timezone_name: str) -> ParsedAddTaskCommand:
+    """Parse an `/addtask` command and convert its optional due date to UTC."""
     command_parts = command_text.strip().split(maxsplit=1)
     if len(command_parts) != 2:
         raise AddTaskCommandParseError("Add task command requires a title.")
