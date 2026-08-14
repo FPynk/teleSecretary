@@ -11,6 +11,10 @@
   a strict selected set, and all future pending reminders on a task.
 - Cancellation is atomic against due-reminder claims, records a canonical UTC
   cancellation timestamp, and keeps terminal reminder history unchanged.
+- Added deterministic first-attempt downtime recovery for claimed reminders.
+- Routes reminders up to 60 minutes late normally, marks reminders more than
+  60 minutes but under 12 hours late as missed delivery candidates, and
+  atomically expires reminders at least 12 hours late without network I/O.
 
 ## 2026-07-22
 

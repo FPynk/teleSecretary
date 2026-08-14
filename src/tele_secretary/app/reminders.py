@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from enum import Enum
 from sqlite3 import Connection
 from typing import Any
 from uuid import uuid4
 
 from tele_secretary.time_utils import ensure_utc, to_storage_text, utc_now
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ReminderServiceError(Exception):
@@ -72,6 +77,21 @@ class ClaimedReminderRecord:
     delivery_channel: str
     retry_count: int
     claimed_at: str
+
+
+class ReminderRecoveryDeliveryKind(Enum):
+    """Routes a recovered reminder to its normal or missed delivery path."""
+
+    NORMAL = "normal"
+    MISSED = "missed"
+
+
+@dataclass(frozen=True)
+class RecoveredReminderRecord:
+    """Pairs one claimed reminder with its post-downtime delivery route."""
+
+    reminder: ClaimedReminderRecord
+    delivery_kind: ReminderRecoveryDeliveryKind
 
 
 _REMINDER_COLUMNS = """
@@ -476,6 +496,191 @@ def claim_due_reminders(
         raise
 
 
+def apply_reminder_downtime_recovery(
+    conn: Connection,
+    *,
+    claimed_reminders: tuple[ClaimedReminderRecord, ...],
+    now: datetime | None = None,
+) -> tuple[RecoveredReminderRecord, ...]:
+    """Classify fresh claims and expire reminders that are at least twelve hours late."""
+
+    if conn.in_transaction:
+        raise RuntimeError(
+            "apply_reminder_downtime_recovery requires a connection without an active transaction."
+        )
+
+    evaluation_time = _normalize_recovery_evaluation_time(now or utc_now())
+    claimed_schedules = _validate_claimed_reminders(
+        claimed_reminders,
+        evaluation_time=evaluation_time,
+    )
+    if not claimed_reminders:
+        return ()
+
+    evaluation_time_text = to_storage_text(evaluation_time)
+    recovered_reminders: list[RecoveredReminderRecord] = []
+    decisions: list[tuple[str, str, datetime | None, int | None, str | None]] = []
+    expiration_ids: list[str] = []
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        placeholders = ", ".join("?" for _ in claimed_reminders)
+        rows_by_id = {
+            row["id"]: row
+            for row in conn.execute(
+                f"""
+                SELECT
+                    reminders.id,
+                    reminders.scheduled_at,
+                    reminders.status,
+                    reminders.retry_count,
+                    reminders.last_attempted_at,
+                    items.status AS task_status,
+                    items.deleted_at
+                FROM reminders
+                JOIN items ON items.id = reminders.item_id
+                WHERE reminders.id IN ({placeholders})
+                """,
+                tuple(reminder.reminder_id for reminder in claimed_reminders),
+            ).fetchall()
+        }
+
+        for claimed_reminder in claimed_reminders:
+            row = rows_by_id.get(claimed_reminder.reminder_id)
+            if row is None:
+                decisions.append(
+                    (claimed_reminder.reminder_id, "unchanged_missing", None, None, None)
+                )
+                continue
+
+            scheduled_at = _parse_recovery_scheduled_at(row["scheduled_at"])
+            if scheduled_at != claimed_schedules[claimed_reminder.reminder_id]:
+                raise RuntimeError("Claimed reminder schedule did not match the persisted schedule.")
+
+            if row["status"] != "processing":
+                decisions.append(
+                    (
+                        claimed_reminder.reminder_id,
+                        "unchanged",
+                        None,
+                        None,
+                        row["status"],
+                    )
+                )
+                continue
+
+            if row["retry_count"] != 0 or row["last_attempted_at"] is not None:
+                decisions.append(
+                    (
+                        claimed_reminder.reminder_id,
+                        "unchanged_retry",
+                        None,
+                        None,
+                        row["status"],
+                    )
+                )
+                continue
+
+            if row["task_status"] != "active" or row["deleted_at"] is not None:
+                decisions.append(
+                    (
+                        claimed_reminder.reminder_id,
+                        "unchanged_inactive",
+                        None,
+                        None,
+                        row["status"],
+                    )
+                )
+                continue
+
+            lateness = evaluation_time - scheduled_at
+            lateness_seconds = int(lateness.total_seconds())
+            if lateness <= timedelta(minutes=60):
+                recovered_reminders.append(
+                    RecoveredReminderRecord(
+                        reminder=claimed_reminder,
+                        delivery_kind=ReminderRecoveryDeliveryKind.NORMAL,
+                    )
+                )
+                decisions.append(
+                    (
+                        claimed_reminder.reminder_id,
+                        "normal",
+                        scheduled_at,
+                        lateness_seconds,
+                        None,
+                    )
+                )
+            elif lateness < timedelta(hours=12):
+                recovered_reminders.append(
+                    RecoveredReminderRecord(
+                        reminder=claimed_reminder,
+                        delivery_kind=ReminderRecoveryDeliveryKind.MISSED,
+                    )
+                )
+                decisions.append(
+                    (
+                        claimed_reminder.reminder_id,
+                        "missed",
+                        scheduled_at,
+                        lateness_seconds,
+                        None,
+                    )
+                )
+            else:
+                expiration_ids.append(claimed_reminder.reminder_id)
+                decisions.append(
+                    (
+                        claimed_reminder.reminder_id,
+                        "expired",
+                        scheduled_at,
+                        lateness_seconds,
+                        None,
+                    )
+                )
+
+        if expiration_ids:
+            expiration_placeholders = ", ".join("?" for _ in expiration_ids)
+            update_cursor = conn.execute(
+                f"""
+                UPDATE reminders
+                SET status = 'expired', expired_at = ?, updated_at = ?
+                WHERE status = 'processing'
+                    AND retry_count = 0
+                    AND last_attempted_at IS NULL
+                    AND id IN ({expiration_placeholders})
+                """,
+                (evaluation_time_text, evaluation_time_text, *expiration_ids),
+            )
+            if update_cursor.rowcount != len(expiration_ids):
+                raise RuntimeError("Expired reminder count did not match the recovery decision.")
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    for reminder_id, action, scheduled_at, lateness_seconds, current_status in decisions:
+        if scheduled_at is None:
+            status_fragment = f" current_status={current_status}" if current_status else ""
+            LOGGER.info(
+                "Reminder recovery decision reminder_id=%s action=%s%s",
+                reminder_id,
+                action,
+                status_fragment,
+            )
+            continue
+        LOGGER.info(
+            "Reminder recovery decision reminder_id=%s scheduled_at=%s evaluated_at=%s "
+            "lateness_seconds=%s action=%s",
+            reminder_id,
+            to_storage_text(scheduled_at),
+            evaluation_time_text,
+            lateness_seconds,
+            action,
+        )
+    return tuple(recovered_reminders)
+
+
 def _normalize_scheduled_at(scheduled_at: datetime) -> datetime:
     try:
         return ensure_utc(scheduled_at).replace(microsecond=0)
@@ -507,6 +712,41 @@ def _validate_selected_reminder_ids(reminder_ids: tuple[str, ...]) -> None:
             "invalid_reminder_selection",
             "Reminder selection must include one or more unique reminder IDs.",
         )
+
+
+def _normalize_recovery_evaluation_time(evaluation_time: datetime) -> datetime:
+    """Return the evaluation clock as a second-precision UTC datetime."""
+
+    return ensure_utc(evaluation_time).replace(microsecond=0)
+
+
+def _validate_claimed_reminders(
+    claimed_reminders: tuple[ClaimedReminderRecord, ...],
+    *,
+    evaluation_time: datetime,
+) -> dict[str, datetime]:
+    """Reject duplicate, malformed, or future claim records before a transaction begins."""
+
+    schedules_by_id: dict[str, datetime] = {}
+    for claimed_reminder in claimed_reminders:
+        if claimed_reminder.reminder_id in schedules_by_id:
+            raise ValueError("claimed_reminders must not contain duplicate reminder IDs.")
+        scheduled_at = _parse_recovery_scheduled_at(claimed_reminder.scheduled_at)
+        if scheduled_at > evaluation_time:
+            raise ValueError("Claimed reminder schedule must not be in the future.")
+        schedules_by_id[claimed_reminder.reminder_id] = scheduled_at
+    return schedules_by_id
+
+
+def _parse_recovery_scheduled_at(scheduled_at: str) -> datetime:
+    """Parse one persisted reminder schedule as an aware UTC instant."""
+
+    try:
+        return ensure_utc(datetime.fromisoformat(scheduled_at))
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "Reminder scheduled_at must be an ISO 8601 timezone-aware timestamp."
+        ) from error
 
 
 def _validate_claim_batch_size(batch_size: int) -> None:
