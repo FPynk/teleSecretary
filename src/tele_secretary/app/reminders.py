@@ -370,65 +370,86 @@ def cancel_all_future_pending_reminders_for_task(
     now: datetime | None = None,
 ) -> tuple[ReminderRecord, ...]:
     """Cancel an owned task's pending reminders scheduled after the supplied time."""
-    cancellation_time_text = _normalize_cancellation_time(now or utc_now())
+    cancellation_time = now or utc_now()
+    _normalize_cancellation_time(cancellation_time)
     _require_no_active_transaction(conn, "cancel_all_future_pending_reminders_for_task")
 
     try:
         conn.execute("BEGIN IMMEDIATE")
-        _require_owned_task(conn, user_id=user_id, task_id=task_id, require_active=False)
-        rows = conn.execute(
-            f"""
-            SELECT {_REMINDER_COLUMNS}
-            FROM reminders
-            JOIN items ON items.id = reminders.item_id
-            WHERE items.user_id = ?
-                AND reminders.item_id = ?
-                AND reminders.status = 'pending'
-                AND reminders.scheduled_at > ?
-            ORDER BY reminders.scheduled_at ASC, reminders.id ASC
-            """,
-            (user_id, task_id, cancellation_time_text),
-        ).fetchall()
-        reminder_ids = tuple(row["id"] for row in rows)
-        if not reminder_ids:
-            conn.commit()
-            return ()
-
-        placeholders = ", ".join("?" for _ in reminder_ids)
-        cursor = conn.execute(
-            f"""
-            UPDATE reminders
-            SET status = 'cancelled', cancelled_at = ?, updated_at = ?
-            WHERE item_id = ?
-                AND status = 'pending'
-                AND id IN ({placeholders})
-            """,
-            (cancellation_time_text, cancellation_time_text, task_id, *reminder_ids),
+        cancelled_reminders = cancel_all_future_pending_reminders_for_task_in_transaction(
+            conn,
+            user_id=user_id,
+            task_id=task_id,
+            now=cancellation_time,
         )
-        if cursor.rowcount != len(reminder_ids):
-            raise RuntimeError("Reminder cancellation count did not match future reminders.")
-
-        cancelled_rows = conn.execute(
-            f"""
-            SELECT {_REMINDER_COLUMNS}
-            FROM reminders
-            JOIN items ON items.id = reminders.item_id
-            WHERE items.user_id = ?
-                AND reminders.item_id = ?
-                AND reminders.id IN ({placeholders})
-            """,
-            (user_id, task_id, *reminder_ids),
-        ).fetchall()
-        cancelled_by_id = {
-            row["id"]: _reminder_from_row(row) for row in cancelled_rows
-        }
-        if len(cancelled_by_id) != len(reminder_ids):
-            raise RuntimeError("Cancelled reminders could not be read back.")
         conn.commit()
-        return tuple(cancelled_by_id[reminder_id] for reminder_id in reminder_ids)
+        return cancelled_reminders
     except Exception:
         conn.rollback()
         raise
+
+
+def cancel_all_future_pending_reminders_for_task_in_transaction(
+    conn: Connection,
+    *,
+    user_id: str,
+    task_id: str,
+    now: datetime,
+) -> tuple[ReminderRecord, ...]:
+    """Cancel one owned task's future pending reminders within the caller's transaction."""
+
+    if not conn.in_transaction:
+        raise RuntimeError(
+            "cancel_all_future_pending_reminders_for_task_in_transaction requires an active transaction."
+        )
+    cancellation_time_text = _normalize_cancellation_time(now)
+    _require_owned_task(conn, user_id=user_id, task_id=task_id, require_active=False)
+    rows = conn.execute(
+        f"""
+        SELECT {_REMINDER_COLUMNS}
+        FROM reminders
+        JOIN items ON items.id = reminders.item_id
+        WHERE items.user_id = ?
+            AND reminders.item_id = ?
+            AND reminders.status = 'pending'
+            AND reminders.scheduled_at > ?
+        ORDER BY reminders.scheduled_at ASC, reminders.id ASC
+        """,
+        (user_id, task_id, cancellation_time_text),
+    ).fetchall()
+    reminder_ids = tuple(row["id"] for row in rows)
+    if not reminder_ids:
+        return ()
+
+    placeholders = ", ".join("?" for _ in reminder_ids)
+    cursor = conn.execute(
+        f"""
+        UPDATE reminders
+        SET status = 'cancelled', cancelled_at = ?, updated_at = ?
+        WHERE item_id = ?
+            AND status = 'pending'
+            AND id IN ({placeholders})
+        """,
+        (cancellation_time_text, cancellation_time_text, task_id, *reminder_ids),
+    )
+    if cursor.rowcount != len(reminder_ids):
+        raise RuntimeError("Reminder cancellation count did not match future reminders.")
+
+    cancelled_rows = conn.execute(
+        f"""
+        SELECT {_REMINDER_COLUMNS}
+        FROM reminders
+        JOIN items ON items.id = reminders.item_id
+        WHERE items.user_id = ?
+            AND reminders.item_id = ?
+            AND reminders.id IN ({placeholders})
+        """,
+        (user_id, task_id, *reminder_ids),
+    ).fetchall()
+    cancelled_by_id = {row["id"]: _reminder_from_row(row) for row in cancelled_rows}
+    if len(cancelled_by_id) != len(reminder_ids):
+        raise RuntimeError("Cancelled reminders could not be read back.")
+    return tuple(cancelled_by_id[reminder_id] for reminder_id in reminder_ids)
 
 
 def claim_due_reminders(

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-14
+
+- Completing or soft-deleting a task now atomically cancels that task's pending
+  reminders scheduled strictly after the same transition timestamp.
+- Reopening a task preserves cancelled reminder history; it does not recreate
+  or reactivate reminders.
+
 ## 2026-08-13
 
 - Added one-attempt Telegram delivery for reminders already claimed by the

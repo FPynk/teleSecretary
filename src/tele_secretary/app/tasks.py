@@ -8,6 +8,9 @@ from sqlite3 import Connection
 from typing import Any
 from uuid import uuid4
 
+from tele_secretary.app.reminders import (
+    cancel_all_future_pending_reminders_for_task_in_transaction,
+)
 from tele_secretary.persistence.refs import allocate_ref
 from tele_secretary.time_utils import (
     ensure_utc,
@@ -660,7 +663,8 @@ def complete_task(
             "invalid_completion_transition",
             "Only active tasks can be completed.",
         )
-    completed_at_text = _format_optional_datetime(completed_at, "completed_at") or utc_now_iso()
+    transition_at = completed_at or utc_now()
+    completed_at_text = _format_optional_datetime(transition_at, "completed_at")
 
     with conn:
         conn.execute(
@@ -681,6 +685,12 @@ def complete_task(
             VALUES (?, ?, 'completed', ?, ?)
             """,
             (str(uuid4()), task_id, completed_at_text, source),
+        )
+        cancel_all_future_pending_reminders_for_task_in_transaction(
+            conn,
+            user_id=user_id,
+            task_id=task_id,
+            now=transition_at,
         )
 
     return get_task_details(conn, user_id=user_id, task_id=task_id)
@@ -742,7 +752,8 @@ def soft_delete_task(
             "invalid_delete_transition",
             "Only active or completed tasks can be deleted.",
         )
-    deleted_at_text = _format_optional_datetime(deleted_at, "deleted_at") or utc_now_iso()
+    transition_at = deleted_at or utc_now()
+    deleted_at_text = _format_optional_datetime(transition_at, "deleted_at")
 
     with conn:
         conn.execute(
@@ -755,6 +766,12 @@ def soft_delete_task(
             WHERE id = ? AND user_id = ? AND item_type = 'task' AND deleted_at IS NULL
             """,
             (source, deleted_at_text, deleted_at_text, task_id, user_id),
+        )
+        cancel_all_future_pending_reminders_for_task_in_transaction(
+            conn,
+            user_id=user_id,
+            task_id=task_id,
+            now=transition_at,
         )
 
     return DeleteTaskResult(task_id=task_id, deleted_at=deleted_at_text)
