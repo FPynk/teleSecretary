@@ -8,8 +8,9 @@
   or reactivate reminders.
 - Added `/unremind T<number>` for owner-scoped cancellation of a task's sole
   pending reminder, with clear empty, stale, and persistence-failure responses.
-- Multiple pending reminders are never guessed or changed; the command asks for
-  a selection, which is added separately.
+- Multiple pending reminders now display localized one-based options backed by
+  a per-user in-memory snapshot; selected reminders are revalidated and
+  cancelled atomically without guessing.
 
 ## 2026-08-13
 

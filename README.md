@@ -20,8 +20,8 @@ data model and the first direct Telegram task commands:
 - unit tests for the foundation pieces
 
 Reminder creation is available through `/remind`. `/unremind` cancels a sole
-pending reminder and safely asks for clarification when several exist. Delivery,
-natural-language parsing, and LLM integration are later phases.
+pending reminder directly or presents numbered choices when several are pending.
+Delivery, natural-language parsing, and LLM integration are later phases.
 
 ## Telegram Commands
 
@@ -36,15 +36,17 @@ natural-language parsing, and LLM integration are later phases.
 - `/reopen T<number>` - reopen a completed task
 - `/today` - show your deterministic task focus list
 - `/remind T<number> <time>` - set a task reminder
-- `/unremind T<number>` - cancel a task's sole pending reminder
+- `/unremind T<number> [option ...]` - cancel one or more task reminders
 
 `/remind` accepts deterministic V1 times such as `tomorrow 2pm`, `fri 14:30`,
 and `25/07/2026 2:30 PM`. Expressions and confirmation times use each owner's
 persisted IANA timezone; reminders are stored in UTC.
 
-`/unremind` cancels a task's sole pending reminder. If there are none, it says
-so; if several are pending, it makes no change and asks for a selection. The
-numbered selection flow is the next reminder-command step.
+`/unremind` cancels a task's sole pending reminder. If several are pending, it
+lists localized one-based options and retains that exact list only in the
+requesting Telegram user's session. Follow up with, for example,
+`/unremind T12 1 2`; the bot verifies the pending list is unchanged, then
+cancels the chosen reminders atomically.
 
 ## Local Setup
 

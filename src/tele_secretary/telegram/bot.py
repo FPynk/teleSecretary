@@ -17,9 +17,11 @@ from tele_secretary.app.reminder_time_parser import (
 )
 from tele_secretary.app.reminders import (
     ReminderNotFoundError,
+    ReminderSelectionError,
     ReminderServiceError,
     ReminderValidationError,
     cancel_pending_reminder,
+    cancel_selected_pending_reminders,
     create_reminder,
     list_pending_reminders_for_task,
 )
@@ -72,9 +74,12 @@ from tele_secretary.telegram.responses import (
     build_today_focus_response,
     build_unauthorized_response,
     build_unremind_cancelled_response,
-    build_unremind_multiple_pending_response,
+    build_unremind_invalid_option_response,
     build_unremind_no_pending_response,
     build_unremind_persistence_error_response,
+    build_unremind_selection_cancelled_response,
+    build_unremind_selection_prompt_response,
+    build_unremind_selection_stale_response,
     build_unremind_stale_response,
     build_unremind_usage_response,
 )
@@ -86,6 +91,8 @@ ADD_TASK_DUE_LIKE_PATTERN = re.compile(r"(?<!\S)-{1,2}due")
 TASK_REF_PATTERN = re.compile(r"T[1-9]\d*", re.IGNORECASE)
 REMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/remind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 UNREMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/unremind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
+UNREMIND_SELECTION_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
+UNREMIND_SELECTION_CONTEXT_KEY = "unremind_selection"
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,23 @@ class ParsedRemindCommand:
 
 class RemindCommandParseError(ValueError):
     """The `/remind` command envelope is malformed."""
+
+
+@dataclass(frozen=True)
+class ParsedUnremindCommand:
+    """The task reference and optional numbered choices in `/unremind`."""
+
+    task_ref: str
+    selection_numbers: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class UnremindSelectionSnapshot:
+    """The exact ordered pending-reminder list shown to one Telegram user."""
+
+    task_id: str
+    task_ref: str
+    reminder_ids: tuple[str, ...]
 
 
 def run_bot(config: AppConfig) -> None:
@@ -559,16 +583,15 @@ def _remind_handler(config: AppConfig) -> Any:
 def _unremind_handler(config: AppConfig) -> Any:
     """Build the owner-scoped `/unremind` handler."""
     async def handler(update: Any, context: Any) -> None:
-        """Cancel a sole pending reminder without guessing among multiple reminders."""
-        del context
+        """Cancel one reminder directly or use an explicit multi-reminder selection."""
         telegram_user_id = await _get_authorized_telegram_user_id(update, config)
         if telegram_user_id is None:
             return
         if update.message is None:
             return
 
-        task_ref = parse_unremind_command_text(update.message.text or "")
-        if task_ref is None:
+        command = parse_unremind_command_text(update.message.text or "")
+        if command is None:
             await update.message.reply_text(build_unremind_usage_response())
             return
 
@@ -583,34 +606,98 @@ def _unremind_handler(config: AppConfig) -> Any:
                 task = get_task_details_by_ref(
                     conn,
                     user_id=user.user_id,
-                    task_ref=task_ref,
+                    task_ref=command.task_ref,
                 )
-                pending_reminders = list_pending_reminders_for_task(
-                    conn,
-                    user_id=user.user_id,
-                    task_id=task.id,
-                )
-                if not pending_reminders:
-                    response = build_unremind_no_pending_response(task)
-                elif len(pending_reminders) == 1:
-                    cancellation = cancel_pending_reminder(
+                if command.selection_numbers:
+                    selection_snapshot = context.user_data.get(UNREMIND_SELECTION_CONTEXT_KEY)
+                    if (
+                        not isinstance(selection_snapshot, UnremindSelectionSnapshot)
+                        or selection_snapshot.task_id != task.id
+                        or selection_snapshot.task_ref != command.task_ref
+                    ):
+                        context.user_data.pop(UNREMIND_SELECTION_CONTEXT_KEY, None)
+                        response = build_unremind_selection_stale_response(command.task_ref)
+                    else:
+                        pending_reminders = list_pending_reminders_for_task(
+                            conn,
+                            user_id=user.user_id,
+                            task_id=task.id,
+                        )
+                        if (
+                            tuple(reminder.id for reminder in pending_reminders)
+                            != selection_snapshot.reminder_ids
+                        ):
+                            context.user_data.pop(UNREMIND_SELECTION_CONTEXT_KEY, None)
+                            response = build_unremind_selection_stale_response(command.task_ref)
+                        elif any(
+                            selection_number > len(selection_snapshot.reminder_ids)
+                            for selection_number in command.selection_numbers
+                        ):
+                            response = build_unremind_invalid_option_response()
+                        else:
+                            selected_reminder_ids = tuple(
+                                selection_snapshot.reminder_ids[selection_number - 1]
+                                for selection_number in command.selection_numbers
+                            )
+                            try:
+                                cancel_selected_pending_reminders(
+                                    conn,
+                                    user_id=user.user_id,
+                                    task_id=task.id,
+                                    reminder_ids=selected_reminder_ids,
+                                )
+                            except ReminderSelectionError:
+                                context.user_data.pop(UNREMIND_SELECTION_CONTEXT_KEY, None)
+                                response = build_unremind_selection_stale_response(command.task_ref)
+                            else:
+                                context.user_data.pop(UNREMIND_SELECTION_CONTEXT_KEY, None)
+                                response = build_unremind_selection_cancelled_response(
+                                    task,
+                                    len(selected_reminder_ids),
+                                )
+                else:
+                    pending_reminders = list_pending_reminders_for_task(
                         conn,
                         user_id=user.user_id,
-                        reminder_id=pending_reminders[0].id,
+                        task_id=task.id,
                     )
-                    response = (
-                        build_unremind_cancelled_response(task)
-                        if cancellation.was_cancelled
-                        else build_unremind_stale_response(task_ref)
-                    )
-                else:
-                    response = build_unremind_multiple_pending_response(task)
+                    if not pending_reminders:
+                        response = build_unremind_no_pending_response(task)
+                    elif len(pending_reminders) == 1:
+                        cancellation = cancel_pending_reminder(
+                            conn,
+                            user_id=user.user_id,
+                            reminder_id=pending_reminders[0].id,
+                        )
+                        response = (
+                            build_unremind_cancelled_response(task)
+                            if cancellation.was_cancelled
+                            else build_unremind_stale_response(command.task_ref)
+                        )
+                    else:
+                        context.user_data[UNREMIND_SELECTION_CONTEXT_KEY] = UnremindSelectionSnapshot(
+                            task_id=task.id,
+                            task_ref=task.ref,
+                            reminder_ids=tuple(reminder.id for reminder in pending_reminders),
+                        )
+                        response = build_unremind_selection_prompt_response(
+                            task,
+                            pending_reminders,
+                            user.timezone,
+                        )
             except (TaskNotFoundError, ReminderNotFoundError):
-                response = build_task_not_found_response(task_ref)
+                response = build_task_not_found_response(command.task_ref)
+            except ReminderSelectionError:
+                context.user_data.pop(UNREMIND_SELECTION_CONTEXT_KEY, None)
+                response = build_unremind_selection_stale_response(command.task_ref)
             except ReminderValidationError:
-                response = build_unremind_stale_response(task_ref)
+                response = (
+                    build_unremind_selection_stale_response(command.task_ref)
+                    if command.selection_numbers
+                    else build_unremind_stale_response(command.task_ref)
+                )
             except sqlite3.Error:
-                LOGGER.exception("Could not cancel reminder for %s", task_ref)
+                LOGGER.exception("Could not cancel reminder for %s", command.task_ref)
                 response = build_unremind_persistence_error_response()
         finally:
             conn.close()
@@ -657,16 +744,29 @@ def parse_remind_command_text(command_text: str) -> ParsedRemindCommand:
     )
 
 
-def parse_unremind_command_text(command_text: str) -> str | None:
-    """Parse the sole task reference accepted by the initial `/unremind` command."""
+def parse_unremind_command_text(command_text: str) -> ParsedUnremindCommand | None:
+    """Parse `/unremind` with an optional unique sequence of positive choices."""
     command_parts = command_text.strip().split()
     if (
-        len(command_parts) != 2
+        len(command_parts) < 2
         or UNREMIND_COMMAND_TOKEN_PATTERN.fullmatch(command_parts[0]) is None
         or TASK_REF_PATTERN.fullmatch(command_parts[1]) is None
     ):
         return None
-    return command_parts[1].upper()
+
+    selection_numbers: list[int] = []
+    for selection_text in command_parts[2:]:
+        if UNREMIND_SELECTION_NUMBER_PATTERN.fullmatch(selection_text) is None:
+            return None
+        selection_number = int(selection_text)
+        if selection_number in selection_numbers:
+            return None
+        selection_numbers.append(selection_number)
+
+    return ParsedUnremindCommand(
+        task_ref=command_parts[1].upper(),
+        selection_numbers=tuple(selection_numbers),
+    )
 
 
 def parse_addtask_command_text(command_text: str, timezone_name: str) -> ParsedAddTaskCommand:
