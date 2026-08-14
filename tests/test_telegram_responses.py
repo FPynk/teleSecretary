@@ -22,6 +22,7 @@ class TelegramResponseTests(unittest.TestCase):
         self.assertIn("/reopen T<number>", response)
         self.assertIn("/today", response)
         self.assertIn("/remind T<number> <time>", response)
+        self.assertIn("/unremind T<number>", response)
         self.assertIn("/list", response)
         self.assertIn("/addtask", response)
         self.assertIn("/show", response)

@@ -94,6 +94,7 @@ def get_help_text(topic: str | None = None) -> str:
             "- /reopen T<number> - reopen a completed task",
             "- /today - show your deterministic focus list",
             "- /remind T<number> <time> - set a task reminder",
+            "- /unremind T<number> - cancel a task reminder",
             "- /help [topic] - show command help",
             "",
             "Use /help edit for detailed edit instructions.",
