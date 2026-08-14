@@ -6,6 +6,10 @@
   reminders scheduled strictly after the same transition timestamp.
 - Reopening a task preserves cancelled reminder history; it does not recreate
   or reactivate reminders.
+- Added `/unremind T<number>` for owner-scoped cancellation of a task's sole
+  pending reminder, with clear empty, stale, and persistence-failure responses.
+- Multiple pending reminders are never guessed or changed; the command asks for
+  a selection, which is added separately.
 
 ## 2026-08-13
 

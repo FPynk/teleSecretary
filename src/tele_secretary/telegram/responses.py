@@ -144,6 +144,36 @@ def build_reminder_created_response(
     return "\n".join(lines)
 
 
+def build_unremind_usage_response() -> str:
+    """Build guidance for an invalid `/unremind` command."""
+    return "Usage: /unremind T<number>"
+
+
+def build_unremind_no_pending_response(task: TaskRecord) -> str:
+    """Explain that an owned task has no pending reminders to cancel."""
+    return f'No pending reminders for "{task.title}".'
+
+
+def build_unremind_cancelled_response(task: TaskRecord) -> str:
+    """Confirm cancellation of an owned task's sole pending reminder."""
+    return f'Cancelled the reminder for "{task.title}".'
+
+
+def build_unremind_multiple_pending_response(task: TaskRecord) -> str:
+    """Avoid guessing which of several pending reminders the user meant."""
+    return f'"{task.title}" has multiple pending reminders. None were cancelled.'
+
+
+def build_unremind_stale_response(task_ref: str) -> str:
+    """Ask the user to reload a reminder that changed before cancellation."""
+    return f"That reminder is no longer pending. Run /unremind {task_ref} again."
+
+
+def build_unremind_persistence_error_response() -> str:
+    """Build the generic reply for a reminder-cancellation storage failure."""
+    return "Could not cancel the reminder. Please try again."
+
+
 def build_task_not_found_response(task_ref: str) -> str:
     return f"Task {task_ref} was not found. Use /list to see active task refs."
 

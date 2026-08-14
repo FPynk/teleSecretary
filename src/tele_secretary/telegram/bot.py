@@ -18,7 +18,10 @@ from tele_secretary.app.reminder_time_parser import (
 from tele_secretary.app.reminders import (
     ReminderNotFoundError,
     ReminderServiceError,
+    ReminderValidationError,
+    cancel_pending_reminder,
     create_reminder,
+    list_pending_reminders_for_task,
 )
 from tele_secretary.app.tasks import (
     TaskNotFoundError,
@@ -68,6 +71,12 @@ from tele_secretary.telegram.responses import (
     build_task_list_response,
     build_today_focus_response,
     build_unauthorized_response,
+    build_unremind_cancelled_response,
+    build_unremind_multiple_pending_response,
+    build_unremind_no_pending_response,
+    build_unremind_persistence_error_response,
+    build_unremind_stale_response,
+    build_unremind_usage_response,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -76,6 +85,7 @@ ADD_TASK_DUE_FLAG_PATTERN = re.compile(r"(?<!\S)-due(?!\S)")
 ADD_TASK_DUE_LIKE_PATTERN = re.compile(r"(?<!\S)-{1,2}due")
 TASK_REF_PATTERN = re.compile(r"T[1-9]\d*", re.IGNORECASE)
 REMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/remind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
+UNREMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/unremind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -143,6 +153,7 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("reopen", _reopen_handler(config)))
     application.add_handler(CommandHandler("today", _today_handler(config)))
     application.add_handler(CommandHandler("remind", _remind_handler(config)))
+    application.add_handler(CommandHandler("unremind", _unremind_handler(config)))
     return application
 
 
@@ -545,6 +556,70 @@ def _remind_handler(config: AppConfig) -> Any:
     return handler
 
 
+def _unremind_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/unremind` handler."""
+    async def handler(update: Any, context: Any) -> None:
+        """Cancel a sole pending reminder without guessing among multiple reminders."""
+        del context
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
+            return
+        if update.message is None:
+            return
+
+        task_ref = parse_unremind_command_text(update.message.text or "")
+        if task_ref is None:
+            await update.message.reply_text(build_unremind_usage_response())
+            return
+
+        conn = connect(config.db_path)
+        try:
+            try:
+                user = get_or_create_telegram_user(
+                    conn,
+                    telegram_user_id=telegram_user_id,
+                    default_timezone=config.user_timezone,
+                )
+                task = get_task_details_by_ref(
+                    conn,
+                    user_id=user.user_id,
+                    task_ref=task_ref,
+                )
+                pending_reminders = list_pending_reminders_for_task(
+                    conn,
+                    user_id=user.user_id,
+                    task_id=task.id,
+                )
+                if not pending_reminders:
+                    response = build_unremind_no_pending_response(task)
+                elif len(pending_reminders) == 1:
+                    cancellation = cancel_pending_reminder(
+                        conn,
+                        user_id=user.user_id,
+                        reminder_id=pending_reminders[0].id,
+                    )
+                    response = (
+                        build_unremind_cancelled_response(task)
+                        if cancellation.was_cancelled
+                        else build_unremind_stale_response(task_ref)
+                    )
+                else:
+                    response = build_unremind_multiple_pending_response(task)
+            except (TaskNotFoundError, ReminderNotFoundError):
+                response = build_task_not_found_response(task_ref)
+            except ReminderValidationError:
+                response = build_unremind_stale_response(task_ref)
+            except sqlite3.Error:
+                LOGGER.exception("Could not cancel reminder for %s", task_ref)
+                response = build_unremind_persistence_error_response()
+        finally:
+            conn.close()
+
+        await update.message.reply_text(response)
+
+    return handler
+
+
 def parse_show_command_text(command_text: str) -> str | None:
     """Parse a task reference from a `/show` command."""
     command_parts = command_text.strip().split()
@@ -580,6 +655,18 @@ def parse_remind_command_text(command_text: str) -> ParsedRemindCommand:
         task_ref=task_ref_match.group().upper(),
         time_expression=time_expression or None,
     )
+
+
+def parse_unremind_command_text(command_text: str) -> str | None:
+    """Parse the sole task reference accepted by the initial `/unremind` command."""
+    command_parts = command_text.strip().split()
+    if (
+        len(command_parts) != 2
+        or UNREMIND_COMMAND_TOKEN_PATTERN.fullmatch(command_parts[0]) is None
+        or TASK_REF_PATTERN.fullmatch(command_parts[1]) is None
+    ):
+        return None
+    return command_parts[1].upper()
 
 
 def parse_addtask_command_text(command_text: str, timezone_name: str) -> ParsedAddTaskCommand:

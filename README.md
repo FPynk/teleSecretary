@@ -15,11 +15,12 @@ data model and the first direct Telegram task commands:
 - task-linked reminder persistence with lifecycle constraints and indexes
 - application-level health and help actions
 - persistent per-user public refs on shared items (`T1` for tasks and `N1` for notes)
-- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, `/edit`, `/done`, `/reopen`, `/today`, and `/remind`
+- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, `/edit`, `/done`, `/reopen`, `/today`, `/remind`, and `/unremind`
 - Docker and Docker Compose setup
 - unit tests for the foundation pieces
 
-Reminder creation is available through `/remind`. Delivery, cancellation,
+Reminder creation is available through `/remind`. `/unremind` cancels a sole
+pending reminder and safely asks for clarification when several exist. Delivery,
 natural-language parsing, and LLM integration are later phases.
 
 ## Telegram Commands
@@ -35,10 +36,15 @@ natural-language parsing, and LLM integration are later phases.
 - `/reopen T<number>` - reopen a completed task
 - `/today` - show your deterministic task focus list
 - `/remind T<number> <time>` - set a task reminder
+- `/unremind T<number>` - cancel a task's sole pending reminder
 
 `/remind` accepts deterministic V1 times such as `tomorrow 2pm`, `fri 14:30`,
 and `25/07/2026 2:30 PM`. Expressions and confirmation times use each owner's
 persisted IANA timezone; reminders are stored in UTC.
+
+`/unremind` cancels a task's sole pending reminder. If there are none, it says
+so; if several are pending, it makes no change and asks for a selection. The
+numbered selection flow is the next reminder-command step.
 
 ## Local Setup
 
