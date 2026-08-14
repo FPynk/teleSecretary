@@ -6,6 +6,7 @@ from datetime import datetime
 
 from tele_secretary.app.help import get_help_text
 from tele_secretary.app.reminder_time_parser import ReminderTimeWarning
+from tele_secretary.app.reminders import ReminderRecord
 from tele_secretary.app.tasks import FocusTaskRecord, TaskRecord
 from tele_secretary.time_utils import utc_to_local
 
@@ -146,7 +147,7 @@ def build_reminder_created_response(
 
 def build_unremind_usage_response() -> str:
     """Build guidance for an invalid `/unremind` command."""
-    return "Usage: /unremind T<number>"
+    return "Usage: /unremind T<number> [option ...]"
 
 
 def build_unremind_no_pending_response(task: TaskRecord) -> str:
@@ -159,9 +160,44 @@ def build_unremind_cancelled_response(task: TaskRecord) -> str:
     return f'Cancelled the reminder for "{task.title}".'
 
 
-def build_unremind_multiple_pending_response(task: TaskRecord) -> str:
-    """Avoid guessing which of several pending reminders the user meant."""
-    return f'"{task.title}" has multiple pending reminders. None were cancelled.'
+def build_unremind_selection_prompt_response(
+    task: TaskRecord,
+    reminders: tuple[ReminderRecord, ...],
+    timezone_name: str,
+) -> str:
+    """List each pending reminder as a localized one-based cancellation choice."""
+    lines = [f'Pending reminders for "{task.title}":']
+    for option_number, reminder in enumerate(reminders, start=1):
+        lines.append(
+            f"{option_number}. {_format_optional_datetime(reminder.scheduled_at, timezone_name)}"
+        )
+    lines.extend(
+        [
+            "",
+            "Cancel one or more with:",
+            f"/unremind {task.ref} 1 [2 ...]",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def build_unremind_selection_cancelled_response(
+    task: TaskRecord,
+    cancelled_count: int,
+) -> str:
+    """Confirm the exact number of reminders cancelled from a displayed list."""
+    reminder_word = "reminder" if cancelled_count == 1 else "reminders"
+    return f'Cancelled {cancelled_count} {reminder_word} for "{task.title}".'
+
+
+def build_unremind_invalid_option_response() -> str:
+    """Tell the user that a supplied number is outside the displayed list."""
+    return "That option is not available. Use a number from the reminder list."
+
+
+def build_unremind_selection_stale_response(task_ref: str) -> str:
+    """Ask the user to refresh a list that changed before selected cancellation."""
+    return f"That reminder list has changed. Run /unremind {task_ref} again."
 
 
 def build_unremind_stale_response(task_ref: str) -> str:
