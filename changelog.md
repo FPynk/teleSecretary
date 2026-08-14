@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-13
+
+- Added one-attempt Telegram delivery for reminders already claimed by the
+  worker, using deterministic plain-text messages and the claimed owner's ID.
+- Delivery rechecks the exact claim lease, task activity, persisted owner, and
+  current allowlist before Telegram I/O; removed recipients are cancelled.
+- Successful sends are recorded as sent. Failed sends store only a sanitized
+  code and return to pending through count 3, then become terminal at count 4.
+
 ## 2026-07-23
 
 - Added independent multi-user Telegram ownership: every authorized sender now

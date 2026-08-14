@@ -40,6 +40,10 @@ class ReminderSelectionError(ReminderServiceError):
     pass
 
 
+class ReminderDeliveryStateError(ReminderServiceError):
+    pass
+
+
 @dataclass(frozen=True)
 class ReminderRecord:
     id: str
@@ -94,6 +98,21 @@ class RecoveredReminderRecord:
     delivery_kind: ReminderRecoveryDeliveryKind
 
 
+class ReminderDeliveryPreparationOutcome(Enum):
+    """Describes whether a claimed reminder is ready for Telegram delivery."""
+
+    READY = "ready"
+    CANCELLED_DISALLOWED_RECIPIENT = "cancelled_disallowed_recipient"
+    INELIGIBLE = "ineligible"
+
+
+@dataclass(frozen=True)
+class ReminderDeliveryPreparationResult:
+    """Returns the final persisted eligibility decision for a claimed reminder."""
+
+    outcome: ReminderDeliveryPreparationOutcome
+
+
 _REMINDER_COLUMNS = """
     reminders.id,
     reminders.item_id AS task_id,
@@ -112,6 +131,7 @@ _REMINDER_COLUMNS = """
 
 DEFAULT_CLAIM_BATCH_SIZE = 50
 MAX_CLAIM_BATCH_SIZE = 100
+MAX_DELIVERY_FAILURE_CODE_LENGTH = 64
 
 
 def create_reminder(
@@ -681,6 +701,237 @@ def apply_reminder_downtime_recovery(
     return tuple(recovered_reminders)
 
 
+def prepare_claimed_reminder_delivery(
+    conn: Connection,
+    *,
+    claimed_reminder: ClaimedReminderRecord,
+    allowed_telegram_user_ids: tuple[int, ...],
+    evaluated_at: datetime | None = None,
+) -> ReminderDeliveryPreparationResult:
+    """Confirm a claim is still eligible and cancel a removed recipient before sending."""
+
+    _require_no_active_transaction(conn, "prepare_claimed_reminder_delivery")
+    evaluated_at_text = _normalize_delivery_timestamp(evaluated_at or utc_now())
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT
+                reminders.item_id AS task_id,
+                reminders.status,
+                reminders.delivery_channel,
+                reminders.retry_count,
+                reminders.updated_at,
+                items.user_id,
+                items.status AS task_status,
+                items.deleted_at,
+                users.telegram_user_id
+            FROM reminders
+            JOIN items ON items.id = reminders.item_id
+            JOIN users ON users.id = items.user_id
+            WHERE reminders.id = ?
+            """,
+            (claimed_reminder.reminder_id,),
+        ).fetchone()
+        if row is None or any(
+            (
+                claimed_reminder.status != "processing",
+                row["task_id"] != claimed_reminder.task_id,
+                row["user_id"] != claimed_reminder.user_id,
+                row["status"] != "processing",
+                row["delivery_channel"] != claimed_reminder.delivery_channel,
+                row["retry_count"] != claimed_reminder.retry_count,
+                row["updated_at"] != claimed_reminder.claimed_at,
+            )
+        ):
+            conn.commit()
+            return ReminderDeliveryPreparationResult(
+                ReminderDeliveryPreparationOutcome.INELIGIBLE
+            )
+
+        if row["task_status"] != "active" or row["deleted_at"] is not None:
+            conn.commit()
+            return ReminderDeliveryPreparationResult(
+                ReminderDeliveryPreparationOutcome.INELIGIBLE
+            )
+
+        if row["telegram_user_id"] != claimed_reminder.telegram_user_id:
+            conn.commit()
+            return ReminderDeliveryPreparationResult(
+                ReminderDeliveryPreparationOutcome.INELIGIBLE
+            )
+
+        if row["telegram_user_id"] not in allowed_telegram_user_ids:
+            update_cursor = conn.execute(
+                """
+                UPDATE reminders
+                SET status = 'cancelled', cancelled_at = ?, updated_at = ?
+                WHERE id = ?
+                    AND item_id = ?
+                    AND status = 'processing'
+                    AND retry_count = ?
+                    AND updated_at = ?
+                """,
+                (
+                    evaluated_at_text,
+                    evaluated_at_text,
+                    claimed_reminder.reminder_id,
+                    claimed_reminder.task_id,
+                    claimed_reminder.retry_count,
+                    claimed_reminder.claimed_at,
+                ),
+            )
+            if update_cursor.rowcount != 1:
+                raise ReminderDeliveryStateError(
+                    "reminder_delivery_state_changed",
+                    "Reminder delivery state changed before recipient cancellation.",
+                )
+            conn.commit()
+            return ReminderDeliveryPreparationResult(
+                ReminderDeliveryPreparationOutcome.CANCELLED_DISALLOWED_RECIPIENT
+            )
+
+        conn.commit()
+        return ReminderDeliveryPreparationResult(ReminderDeliveryPreparationOutcome.READY)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def record_claimed_reminder_sent(
+    conn: Connection,
+    *,
+    claimed_reminder: ClaimedReminderRecord,
+    sent_at: datetime | None = None,
+) -> ReminderRecord:
+    """Persist one successful Telegram send for the exact claim lease."""
+
+    _require_no_active_transaction(conn, "record_claimed_reminder_sent")
+    sent_at_text = _normalize_delivery_timestamp(sent_at or utc_now())
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        update_cursor = conn.execute(
+            """
+            UPDATE reminders
+            SET status = 'sent', sent_at = ?, updated_at = ?, failure_reason = NULL
+            WHERE id = ?
+                AND item_id = ?
+                AND status = 'processing'
+                AND retry_count = ?
+                AND updated_at = ?
+            """,
+            (
+                sent_at_text,
+                sent_at_text,
+                claimed_reminder.reminder_id,
+                claimed_reminder.task_id,
+                claimed_reminder.retry_count,
+                claimed_reminder.claimed_at,
+            ),
+        )
+        if update_cursor.rowcount != 1:
+            raise ReminderDeliveryStateError(
+                "reminder_delivery_state_changed",
+                "Reminder delivery state changed before recording success.",
+            )
+        reminder = _get_reminder_by_id_for_delivery(
+            conn,
+            reminder_id=claimed_reminder.reminder_id,
+        )
+        conn.commit()
+        return reminder
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def record_claimed_reminder_failure(
+    conn: Connection,
+    *,
+    claimed_reminder: ClaimedReminderRecord,
+    failure_reason: str,
+    attempted_at: datetime | None = None,
+) -> ReminderRecord:
+    """Persist one failed Telegram send and return it to pending or terminal failure."""
+
+    _require_no_active_transaction(conn, "record_claimed_reminder_failure")
+    normalized_failure_reason = _normalize_delivery_failure_reason(failure_reason)
+    attempted_at_text = _normalize_delivery_timestamp(attempted_at or utc_now())
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT retry_count
+            FROM reminders
+            WHERE id = ?
+                AND item_id = ?
+                AND status = 'processing'
+                AND retry_count = ?
+                AND updated_at = ?
+            """,
+            (
+                claimed_reminder.reminder_id,
+                claimed_reminder.task_id,
+                claimed_reminder.retry_count,
+                claimed_reminder.claimed_at,
+            ),
+        ).fetchone()
+        if row is None:
+            raise ReminderDeliveryStateError(
+                "reminder_delivery_state_changed",
+                "Reminder delivery state changed before recording failure.",
+            )
+        if row["retry_count"] not in range(4):
+            raise ReminderDeliveryStateError(
+                "invalid_reminder_delivery_state",
+                "Reminder retry count cannot be recorded as another delivery failure.",
+            )
+
+        next_retry_count = row["retry_count"] + 1
+        next_status = "pending" if next_retry_count < 4 else "failed"
+        update_cursor = conn.execute(
+            """
+            UPDATE reminders
+            SET
+                status = ?,
+                retry_count = ?,
+                last_attempted_at = ?,
+                updated_at = ?,
+                failure_reason = ?
+            WHERE id = ?
+                AND item_id = ?
+                AND status = 'processing'
+                AND retry_count = ?
+                AND updated_at = ?
+            """,
+            (
+                next_status,
+                next_retry_count,
+                attempted_at_text,
+                attempted_at_text,
+                normalized_failure_reason,
+                claimed_reminder.reminder_id,
+                claimed_reminder.task_id,
+                claimed_reminder.retry_count,
+                claimed_reminder.claimed_at,
+            ),
+        )
+        if update_cursor.rowcount != 1:
+            raise ReminderDeliveryStateError(
+                "reminder_delivery_state_changed",
+                "Reminder delivery state changed while recording failure.",
+            )
+        reminder = _get_reminder_by_id_for_delivery(
+            conn,
+            reminder_id=claimed_reminder.reminder_id,
+        )
+        conn.commit()
+        return reminder
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def _normalize_scheduled_at(scheduled_at: datetime) -> datetime:
     try:
         return ensure_utc(scheduled_at).replace(microsecond=0)
@@ -699,6 +950,30 @@ def _normalize_cancellation_time(cancelled_at: datetime) -> str:
             "invalid_cancelled_at",
             "cancelled_at must be timezone-aware.",
         ) from error
+
+
+def _normalize_delivery_timestamp(value: datetime) -> str:
+    try:
+        return to_storage_text(ensure_utc(value).replace(microsecond=0))
+    except ValueError as error:
+        raise ReminderValidationError(
+            "invalid_delivery_timestamp",
+            "Delivery timestamps must be timezone-aware.",
+        ) from error
+
+
+def _normalize_delivery_failure_reason(failure_reason: str) -> str:
+    if (
+        not isinstance(failure_reason, str)
+        or not failure_reason
+        or len(failure_reason) > MAX_DELIVERY_FAILURE_CODE_LENGTH
+        or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789_" for character in failure_reason)
+    ):
+        raise ReminderValidationError(
+            "invalid_delivery_failure_reason",
+            "failure_reason must be a short lowercase delivery failure code.",
+        )
+    return failure_reason
 
 
 def _require_no_active_transaction(conn: Connection, operation_name: str) -> None:
@@ -805,6 +1080,24 @@ def _get_owned_reminder(
     ).fetchone()
     if row is None:
         raise ReminderNotFoundError("reminder_not_found", "Reminder was not found.")
+    return _reminder_from_row(row)
+
+
+def _get_reminder_by_id_for_delivery(
+    conn: Connection,
+    *,
+    reminder_id: str,
+) -> ReminderRecord:
+    row = conn.execute(
+        f"""
+        SELECT {_REMINDER_COLUMNS}
+        FROM reminders
+        WHERE reminders.id = ?
+        """,
+        (reminder_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("Reminder delivery result could not be read back.")
     return _reminder_from_row(row)
 
 
