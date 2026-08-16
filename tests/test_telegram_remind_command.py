@@ -425,6 +425,14 @@ class TelegramRemindRegistrationTests(unittest.TestCase):
             def token(self, token):
                 return self
 
+            def post_init(self, callback):
+                self.application.post_init = callback
+                return self
+
+            def post_stop(self, callback):
+                self.application.post_stop = callback
+                return self
+
             def build(self):
                 return self.application
 
