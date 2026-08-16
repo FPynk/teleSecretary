@@ -2,6 +2,10 @@
 
 ## 2026-08-16
 
+- Wired the live reminder worker into the Telegram application lifecycle. It
+  runs immediately at startup and then sequentially every 30 seconds, recovering
+  abandoned leases, processing first attempts and missed summaries, then
+  processing retry attempts with one shared UTC timestamp per cycle.
 - Added cross-service verification for the reminder retry lifecycle, covering
   failure, the exact retry boundary, successful retry, terminal exhaustion,
   lifecycle cancellation, and abandoned-lease recovery.
