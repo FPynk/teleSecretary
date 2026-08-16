@@ -46,6 +46,14 @@ class ReminderClaimTests(unittest.TestCase):
             self._insert_task(conn, "task-deleted", "user-a", "T5", "Deleted", status="deleted", deleted_at=NOW_TEXT)
             self._insert_reminder(conn, "due-earlier", "task-b", "2026-07-22T14:59:00+00:00")
             self._insert_reminder(conn, "due-now", "task-a", NOW_TEXT)
+            self._insert_reminder(
+                conn,
+                "due-retry",
+                "task-a",
+                "2026-07-22T14:00:00+00:00",
+                retry_count=1,
+                last_attempted_at="2026-07-22T14:59:00+00:00",
+            )
             self._insert_reminder(conn, "future", "task-a", "2026-07-22T15:00:01+00:00")
             self._insert_reminder(conn, "already-processing", "task-a", "2026-07-22T14:58:00+00:00", status="processing", retry_count=2)
             self._insert_reminder(conn, "sent", "task-a", "2026-07-22T14:57:00+00:00", status="sent", sent_at=NOW_TEXT)
@@ -69,6 +77,7 @@ class ReminderClaimTests(unittest.TestCase):
         self.assertEqual((claimed[1].status, claimed[1].claimed_at), ("processing", NOW_TEXT))
         self.assertEqual(status_by_id["due-earlier"], "processing")
         self.assertEqual(status_by_id["due-now"], "processing")
+        self.assertEqual(status_by_id["due-retry"], "pending")
         self.assertEqual(status_by_id["future"], "pending")
         self.assertEqual(status_by_id["inactive-completed"], "pending")
         self.assertEqual(status_by_id["inactive-archived"], "pending")
