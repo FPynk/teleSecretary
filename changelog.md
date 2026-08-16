@@ -2,6 +2,9 @@
 
 ## 2026-08-16
 
+- Added repository-local coding guidance and a canonical architecture document
+  covering package boundaries, owner-scoped application APIs, and the planned
+  LLM integration boundary.
 - Added owner-scoped missed-reminder delivery after downtime recovery. One to
   three eligible stale reminders use an explicit missed-message format; four or
   more use one deterministic, bounded plain-text summary.

@@ -23,6 +23,11 @@ Reminder creation is available through `/remind`. `/unremind` cancels a sole
 pending reminder and safely asks for clarification when several exist. Delivery,
 natural-language parsing, and LLM integration are later phases.
 
+## Architecture
+
+The repository's package boundaries, internal application API, and planned LLM
+integration rules are documented in [docs/architecture.md](docs/architecture.md).
+
 ## Telegram Commands
 
 - `/ping` - check that TeleSecretary is awake
