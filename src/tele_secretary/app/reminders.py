@@ -1105,6 +1105,114 @@ def record_claimed_reminder_failure(
         raise
 
 
+def record_claimed_reminder_summary_sent(
+    conn: Connection,
+    *,
+    claimed_reminders: tuple[ClaimedReminderRecord, ...],
+    sent_at: datetime | None = None,
+) -> tuple[ReminderRecord, ...]:
+    """Atomically record an acknowledged first-attempt missed-reminder summary."""
+
+    _require_no_active_transaction(conn, "record_claimed_reminder_summary_sent")
+    _validate_summary_claimed_reminders(claimed_reminders)
+    sent_at_text = _normalize_delivery_timestamp(sent_at or utc_now())
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _validate_persisted_summary_claims(conn, claimed_reminders=claimed_reminders)
+        for claimed_reminder in claimed_reminders:
+            update_cursor = conn.execute(
+                """
+                UPDATE reminders
+                SET status = 'sent', sent_at = ?, updated_at = ?, failure_reason = NULL
+                WHERE id = ?
+                    AND item_id = ?
+                    AND status = 'processing'
+                    AND retry_count = 0
+                    AND last_attempted_at IS NULL
+                    AND updated_at = ?
+                """,
+                (
+                    sent_at_text,
+                    sent_at_text,
+                    claimed_reminder.reminder_id,
+                    claimed_reminder.task_id,
+                    claimed_reminder.claimed_at,
+                ),
+            )
+            if update_cursor.rowcount != 1:
+                raise ReminderDeliveryStateError(
+                    "reminder_delivery_state_changed",
+                    "Reminder delivery state changed before recording summary success.",
+                )
+        reminders = _read_summary_reminders(
+            conn,
+            claimed_reminders=claimed_reminders,
+        )
+        conn.commit()
+        return reminders
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def record_claimed_reminder_summary_failure(
+    conn: Connection,
+    *,
+    claimed_reminders: tuple[ClaimedReminderRecord, ...],
+    failure_reason: str,
+    attempted_at: datetime | None = None,
+) -> tuple[ReminderRecord, ...]:
+    """Atomically make a failed first-attempt missed-reminder summary retryable."""
+
+    _require_no_active_transaction(conn, "record_claimed_reminder_summary_failure")
+    _validate_summary_claimed_reminders(claimed_reminders)
+    normalized_failure_reason = _normalize_delivery_failure_reason(failure_reason)
+    attempted_at_text = _normalize_delivery_timestamp(attempted_at or utc_now())
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _validate_persisted_summary_claims(conn, claimed_reminders=claimed_reminders)
+        for claimed_reminder in claimed_reminders:
+            update_cursor = conn.execute(
+                """
+                UPDATE reminders
+                SET
+                    status = 'pending',
+                    retry_count = 1,
+                    last_attempted_at = ?,
+                    updated_at = ?,
+                    failure_reason = ?
+                WHERE id = ?
+                    AND item_id = ?
+                    AND status = 'processing'
+                    AND retry_count = 0
+                    AND last_attempted_at IS NULL
+                    AND updated_at = ?
+                """,
+                (
+                    attempted_at_text,
+                    attempted_at_text,
+                    normalized_failure_reason,
+                    claimed_reminder.reminder_id,
+                    claimed_reminder.task_id,
+                    claimed_reminder.claimed_at,
+                ),
+            )
+            if update_cursor.rowcount != 1:
+                raise ReminderDeliveryStateError(
+                    "reminder_delivery_state_changed",
+                    "Reminder delivery state changed before recording summary failure.",
+                )
+        reminders = _read_summary_reminders(
+            conn,
+            claimed_reminders=claimed_reminders,
+        )
+        conn.commit()
+        return reminders
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def _normalize_scheduled_at(scheduled_at: datetime) -> datetime:
     try:
         return ensure_utc(scheduled_at).replace(microsecond=0)
@@ -1147,6 +1255,103 @@ def _normalize_delivery_failure_reason(failure_reason: str) -> str:
             "failure_reason must be a short lowercase delivery failure code.",
         )
     return failure_reason
+
+
+def _validate_summary_claimed_reminders(
+    claimed_reminders: tuple[ClaimedReminderRecord, ...],
+) -> None:
+    if len(claimed_reminders) < 4:
+        raise ReminderValidationError(
+            "invalid_reminder_summary",
+            "Reminder summaries require at least four claimed reminders.",
+        )
+
+    reminder_ids = tuple(claimed_reminder.reminder_id for claimed_reminder in claimed_reminders)
+    if len(set(reminder_ids)) != len(reminder_ids):
+        raise ReminderValidationError(
+            "invalid_reminder_summary",
+            "Reminder summaries must not contain duplicate reminder IDs.",
+        )
+
+    first_claim = claimed_reminders[0]
+    if (
+        first_claim.status != "processing"
+        or first_claim.retry_count != 0
+        or first_claim.telegram_user_id is None
+    ):
+        raise ReminderValidationError(
+            "invalid_reminder_summary",
+            "Reminder summaries require first-attempt processing reminders with a recipient.",
+        )
+
+    for claimed_reminder in claimed_reminders[1:]:
+        if (
+            claimed_reminder.status != "processing"
+            or claimed_reminder.retry_count != 0
+            or claimed_reminder.user_id != first_claim.user_id
+            or claimed_reminder.telegram_user_id != first_claim.telegram_user_id
+        ):
+            raise ReminderValidationError(
+                "invalid_reminder_summary",
+                "Reminder summaries require one owner, one recipient, and first attempts.",
+            )
+
+
+def _validate_persisted_summary_claims(
+    conn: Connection,
+    *,
+    claimed_reminders: tuple[ClaimedReminderRecord, ...],
+) -> None:
+    for claimed_reminder in claimed_reminders:
+        row = conn.execute(
+            """
+            SELECT
+                reminders.item_id AS task_id,
+                reminders.status,
+                reminders.retry_count,
+                reminders.last_attempted_at,
+                reminders.updated_at,
+                items.user_id,
+                users.telegram_user_id
+            FROM reminders
+            JOIN items ON items.id = reminders.item_id
+            JOIN users ON users.id = items.user_id
+            WHERE reminders.id = ?
+            """,
+            (claimed_reminder.reminder_id,),
+        ).fetchone()
+        if row is None or any(
+            (
+                row["task_id"] != claimed_reminder.task_id,
+                row["status"] != "processing",
+                row["retry_count"] != 0,
+                row["last_attempted_at"] is not None,
+                row["updated_at"] != claimed_reminder.claimed_at,
+                row["user_id"] != claimed_reminder.user_id,
+                row["telegram_user_id"] != claimed_reminder.telegram_user_id,
+            )
+        ):
+            raise ReminderDeliveryStateError(
+                "reminder_delivery_state_changed",
+                "Reminder delivery state changed before recording a summary result.",
+            )
+
+
+def _read_summary_reminders(
+    conn: Connection,
+    *,
+    claimed_reminders: tuple[ClaimedReminderRecord, ...],
+) -> tuple[ReminderRecord, ...]:
+    reminders_by_id = {
+        claimed_reminder.reminder_id: _get_reminder_by_id_for_delivery(
+            conn,
+            reminder_id=claimed_reminder.reminder_id,
+        )
+        for claimed_reminder in claimed_reminders
+    }
+    if len(reminders_by_id) != len(claimed_reminders):
+        raise RuntimeError("Reminder summary results could not be read back.")
+    return tuple(reminders_by_id[claimed_reminder.reminder_id] for claimed_reminder in claimed_reminders)
 
 
 def _require_no_active_transaction(conn: Connection, operation_name: str) -> None:

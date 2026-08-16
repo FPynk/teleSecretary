@@ -2,6 +2,13 @@
 
 ## 2026-08-16
 
+- Added owner-scoped missed-reminder delivery after downtime recovery. One to
+  three eligible stale reminders use an explicit missed-message format; four or
+  more use one deterministic, bounded plain-text summary.
+- Summary success marks every included first-attempt reminder sent in one
+  transaction. A Telegram failure makes the full group retryable together with
+  one sanitized failure code; the existing retry path later sends retries
+  individually.
 - Split due-reminder claims into mutually exclusive first-attempt and retry
   paths. First attempts require no recorded delivery attempt.
 - Added bounded, atomic retry claiming after fixed 1-, 5-, and 15-minute
