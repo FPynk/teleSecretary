@@ -15,7 +15,7 @@ data model and the first direct Telegram task commands:
 - task-linked reminder persistence with lifecycle constraints and indexes
 - application-level health and help actions
 - persistent per-user public refs on shared items (`T1` for tasks and `N1` for notes)
-- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, `/edit`, `/done`, `/reopen`, `/today`, `/due`, `/remind`, and `/unremind`
+- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, `/edit`, `/done`, `/reopen`, `/delete`, `/today`, `/due`, `/remind`, and `/unremind`
 - Docker and Docker Compose setup
 - unit tests for the foundation pieces
 
@@ -42,6 +42,7 @@ integration rules are documented in [docs/architecture.md](docs/architecture.md)
 - `/edit T<number> -field value [...]` - edit one or more task fields
 - `/done T<number>` - mark an active task complete
 - `/reopen T<number>` - reopen a completed task
+- `/delete T<number>` - soft-delete an active or completed task
 - `/today` - show your deterministic task focus list
 - `/due` - show overdue and upcoming tasks
 - `/remind T<number> <time>` - set a task reminder
@@ -54,6 +55,10 @@ persisted IANA timezone; reminders are stored in UTC.
 `/unremind` cancels a task's sole pending reminder. If there are none, it says
 so; if several are pending, it makes no change and asks for a selection. The
 numbered selection flow is the next reminder-command step.
+
+`/delete` immediately soft-deletes one active or completed task and cancels
+only that task's strictly future pending reminders. Deleted tasks are hidden
+from normal task views while their reminder history remains available for audit.
 
 ## Local Setup
 
