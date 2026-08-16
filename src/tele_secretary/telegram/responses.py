@@ -63,6 +63,18 @@ def build_done_error_response(error_message: str) -> str:
     return f"Could not complete task: {error_message}"
 
 
+def build_delete_usage_response() -> str:
+    return "Usage: /delete T<number>"
+
+
+def build_delete_error_response(error_message: str) -> str:
+    return f"Could not delete task: {error_message}"
+
+
+def build_task_deleted_response(task: TaskRecord) -> str:
+    return f'Deleted "{task.title}".'
+
+
 def build_task_completed_response(task: TaskRecord) -> str:
     return f'Marked "{task.title}" as done.'
 

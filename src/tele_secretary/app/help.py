@@ -92,6 +92,7 @@ def get_help_text(topic: str | None = None) -> str:
             "- /edit T<number> -field value [...] - edit task fields",
             "- /done T<number> - mark a task complete",
             "- /reopen T<number> - reopen a completed task",
+            "- /delete T<number> - remove a task",
             "- /today - show your deterministic focus list",
             "- /remind T<number> <time> - set a task reminder",
             "- /unremind T<number> - cancel a task reminder",
