@@ -40,6 +40,20 @@ def build_today_focus_response(focus_tasks: tuple[FocusTaskRecord, ...]) -> str:
     return "\n".join(lines)
 
 
+def build_urgent_usage_response() -> str:
+    return "Usage: /urgent"
+
+
+def build_urgent_tasks_response(tasks: tuple[TaskRecord, ...]) -> str:
+    if not tasks:
+        return "No urgent tasks."
+
+    lines = ["Urgent tasks:"]
+    for task in tasks:
+        lines.append(f"{task.ref} â€” {task.title} â€” {task.urgency}")
+    return "\n".join(lines)
+
+
 def build_task_created_response(task: TaskRecord, due_date_text: str | None = None) -> str:
     lines = [f"Task added: {task.ref} — {task.title}"]
     if due_date_text is not None:
