@@ -17,6 +17,9 @@
 - Added atomic recovery for abandoned five-minute `processing` leases. Stale
   active-task reminders return to pending; stale inactive-task reminders are
   cancelled while retaining their attempt history.
+- Added cross-service verification for the reminder retry lifecycle, covering
+  failure, the exact retry boundary, successful retry, terminal exhaustion,
+  lifecycle cancellation, and abandoned-lease recovery.
 
 ## 2026-08-14
 
