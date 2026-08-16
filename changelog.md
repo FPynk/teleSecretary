@@ -2,6 +2,9 @@
 
 ## 2026-08-16
 
+- Added `/delete T<number>` for owner-scoped soft deletion of active or
+  completed tasks, including the established atomic cancellation of strictly
+  future pending reminders.
 - Wired the live reminder worker into the Telegram application lifecycle. It
   runs immediately at startup and then sequentially every 30 seconds, recovering
   abandoned leases, processing first attempts and missed summaries, then
