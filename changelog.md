@@ -2,6 +2,9 @@
 
 ## 2026-08-16
 
+- Added cross-service verification for the reminder retry lifecycle, covering
+  failure, the exact retry boundary, successful retry, terminal exhaustion,
+  lifecycle cancellation, and abandoned-lease recovery.
 - Added repository-local coding guidance and a canonical architecture document
   covering package boundaries, owner-scoped application APIs, and the planned
   LLM integration boundary.
