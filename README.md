@@ -26,6 +26,11 @@ it recovers abandoned leases, delivers due reminders, summarizes four or more
 moderately stale reminders for one owner, and processes eligible retries.
 Natural-language parsing and LLM integration are later phases.
 
+## Architecture
+
+The repository's package boundaries, internal application API, and planned LLM
+integration rules are documented in [docs/architecture.md](docs/architecture.md).
+
 ## Telegram Commands
 
 - `/ping` - check that TeleSecretary is awake
