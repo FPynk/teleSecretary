@@ -7,6 +7,9 @@
 - Added bounded, atomic retry claiming after fixed 1-, 5-, and 15-minute
   delays, ordered by the next eligible retry time without changing attempt
   metadata.
+- Added atomic recovery for abandoned five-minute `processing` leases. Stale
+  active-task reminders return to pending; stale inactive-task reminders are
+  cancelled while retaining their attempt history.
 
 ## 2026-08-14
 

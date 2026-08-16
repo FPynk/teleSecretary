@@ -98,6 +98,22 @@ class RecoveredReminderRecord:
     delivery_kind: ReminderRecoveryDeliveryKind
 
 
+class AbandonedReminderRecoveryAction(Enum):
+    """Describes the state transition applied to an abandoned processing lease."""
+
+    REQUEUED = "requeued"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class AbandonedReminderRecoveryResult:
+    """Summarizes one recovered reminder without exposing delivery content."""
+
+    reminder_id: str
+    action: AbandonedReminderRecoveryAction
+    retry_count: int
+
+
 class ReminderDeliveryPreparationOutcome(Enum):
     """Describes whether a claimed reminder is ready for Telegram delivery."""
 
@@ -137,6 +153,7 @@ REMINDER_RETRY_DELAYS = {
     2: timedelta(minutes=5),
     3: timedelta(minutes=15),
 }
+ABANDONED_PROCESSING_LEASE = timedelta(minutes=5)
 
 
 def create_reminder(
@@ -579,6 +596,94 @@ def claim_due_reminder_retries(
         conn.commit()
         LOGGER.info("Claimed due reminder retries count=%s", len(claimed_reminders))
         return claimed_reminders
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def recover_abandoned_processing_reminders(
+    conn: Connection,
+    *,
+    now: datetime | None = None,
+    batch_size: int = DEFAULT_CLAIM_BATCH_SIZE,
+) -> tuple[AbandonedReminderRecoveryResult, ...]:
+    """Recover bounded stale processing leases to pending or cancelled states."""
+
+    _validate_claim_batch_size(batch_size)
+    _require_no_active_transaction(conn, "recover_abandoned_processing_reminders")
+
+    recovery_time = _normalize_recovery_evaluation_time(now or utc_now())
+    recovery_time_text = to_storage_text(recovery_time)
+    lease_cutoff_text = to_storage_text(recovery_time - ABANDONED_PROCESSING_LEASE)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        candidate_rows = conn.execute(
+            """
+            SELECT
+                reminders.id,
+                reminders.retry_count,
+                CASE
+                    WHEN items.status = 'active' AND items.deleted_at IS NULL THEN 'requeued'
+                    ELSE 'cancelled'
+                END AS action
+            FROM reminders
+            JOIN items ON items.id = reminders.item_id
+            WHERE reminders.status = 'processing'
+                AND reminders.updated_at <= ?
+            ORDER BY reminders.updated_at ASC, reminders.id ASC
+            LIMIT ?
+            """,
+            (lease_cutoff_text, batch_size),
+        ).fetchall()
+        if not candidate_rows:
+            conn.commit()
+            LOGGER.info(
+                "Recovered abandoned reminder processing leases count=%s requeued=%s cancelled=%s",
+                0,
+                0,
+                0,
+            )
+            return ()
+
+        requeued_ids = tuple(
+            row["id"] for row in candidate_rows if row["action"] == "requeued"
+        )
+        cancelled_ids = tuple(
+            row["id"] for row in candidate_rows if row["action"] == "cancelled"
+        )
+        if requeued_ids:
+            _recover_selected_processing_reminders(
+                conn,
+                reminder_ids=requeued_ids,
+                lease_cutoff_text=lease_cutoff_text,
+                recovery_time_text=recovery_time_text,
+                action=AbandonedReminderRecoveryAction.REQUEUED,
+            )
+        if cancelled_ids:
+            _recover_selected_processing_reminders(
+                conn,
+                reminder_ids=cancelled_ids,
+                lease_cutoff_text=lease_cutoff_text,
+                recovery_time_text=recovery_time_text,
+                action=AbandonedReminderRecoveryAction.CANCELLED,
+            )
+
+        results = tuple(
+            AbandonedReminderRecoveryResult(
+                reminder_id=row["id"],
+                action=AbandonedReminderRecoveryAction(row["action"]),
+                retry_count=row["retry_count"],
+            )
+            for row in candidate_rows
+        )
+        conn.commit()
+        LOGGER.info(
+            "Recovered abandoned reminder processing leases count=%s requeued=%s cancelled=%s",
+            len(results),
+            len(requeued_ids),
+            len(cancelled_ids),
+        )
+        return results
     except Exception:
         conn.rollback()
         raise
@@ -1126,6 +1231,43 @@ def _claim_selected_reminders(
         _claimed_reminder_from_row(claimed_rows_by_id[reminder_id])
         for reminder_id in candidate_ids
     )
+
+
+def _recover_selected_processing_reminders(
+    conn: Connection,
+    *,
+    reminder_ids: tuple[str, ...],
+    lease_cutoff_text: str,
+    recovery_time_text: str,
+    action: AbandonedReminderRecoveryAction,
+) -> None:
+    """Apply one lease-recovery action while rechecking each selected processing row."""
+
+    placeholders = ", ".join("?" for _ in reminder_ids)
+    if action is AbandonedReminderRecoveryAction.REQUEUED:
+        update_cursor = conn.execute(
+            f"""
+            UPDATE reminders
+            SET status = 'pending', updated_at = ?
+            WHERE status = 'processing'
+                AND updated_at <= ?
+                AND id IN ({placeholders})
+            """,
+            (recovery_time_text, lease_cutoff_text, *reminder_ids),
+        )
+    else:
+        update_cursor = conn.execute(
+            f"""
+            UPDATE reminders
+            SET status = 'cancelled', cancelled_at = ?, updated_at = ?
+            WHERE status = 'processing'
+                AND updated_at <= ?
+                AND id IN ({placeholders})
+            """,
+            (recovery_time_text, recovery_time_text, lease_cutoff_text, *reminder_ids),
+        )
+    if update_cursor.rowcount != len(reminder_ids):
+        raise RuntimeError("Recovered reminder count did not match the selected batch.")
 
 
 def _validate_claimed_reminders(
