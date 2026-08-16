@@ -34,6 +34,7 @@ from tele_secretary.app.tasks import (
     list_active_tasks,
     list_urgent_tasks,
     reopen_task,
+    soft_delete_task,
 )
 from tele_secretary.app.users import (
     bind_unassigned_legacy_single_owner,
@@ -51,6 +52,8 @@ from tele_secretary.telegram.responses import (
     build_addtask_usage_response,
     build_done_error_response,
     build_done_usage_response,
+    build_delete_error_response,
+    build_delete_usage_response,
     build_edit_error_response,
     build_edit_usage_response,
     build_help_response,
@@ -66,6 +69,7 @@ from tele_secretary.telegram.responses import (
     build_show_usage_response,
     build_task_created_response,
     build_task_completed_response,
+    build_task_deleted_response,
     build_task_details_response,
     build_task_not_found_response,
     build_task_updated_response,
@@ -91,6 +95,7 @@ TASK_REF_PATTERN = re.compile(r"T[1-9]\d*", re.IGNORECASE)
 REMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/remind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 UNREMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/unremind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 URGENT_COMMAND_TOKEN_PATTERN = re.compile(r"/urgent(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
+DELETE_COMMAND_TOKEN_PATTERN = re.compile(r"/delete(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 SCHEDULER_BOT_DATA_KEY = "_tele_secretary_reminder_scheduler"
 
 
@@ -163,6 +168,7 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("edit", _edit_handler(config)))
     application.add_handler(CommandHandler("done", _done_handler(config)))
     application.add_handler(CommandHandler("reopen", _reopen_handler(config)))
+    application.add_handler(CommandHandler("delete", _delete_handler(config)))
     application.add_handler(CommandHandler("today", _today_handler(config)))
     application.add_handler(CommandHandler("urgent", _urgent_handler(config)))
     application.add_handler(CommandHandler("remind", _remind_handler(config)))
@@ -500,6 +506,55 @@ def _done_handler(config: AppConfig) -> Any:
     return handler
 
 
+def _delete_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/delete` command handler."""
+    async def handler(update: Any, context: Any) -> None:
+        """Soft-delete one owned task through the application service."""
+        del context
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
+            return
+        if update.message is None:
+            return
+
+        task_ref = parse_delete_command_text(update.message.text or "")
+        if task_ref is None:
+            await update.message.reply_text(build_delete_usage_response())
+            return
+
+        conn = connect(config.db_path)
+        try:
+            user = get_or_create_telegram_user(
+                conn,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
+            )
+            try:
+                task = get_task_details_by_ref(
+                    conn,
+                    user_id=user.user_id,
+                    task_ref=task_ref,
+                )
+                soft_delete_task(
+                    conn,
+                    user_id=user.user_id,
+                    task_id=task.id,
+                    source="telegram_command",
+                )
+            except TaskNotFoundError:
+                response = build_task_not_found_response(task_ref)
+            except TaskValidationError as exc:
+                response = build_delete_error_response(exc.message)
+            else:
+                response = build_task_deleted_response(task)
+        finally:
+            conn.close()
+
+        await update.message.reply_text(response)
+
+    return handler
+
+
 def _today_handler(config: AppConfig) -> Any:
     """Build the owner-scoped `/today` command handler."""
     async def handler(update: Any, context: Any) -> None:
@@ -717,6 +772,18 @@ def parse_urgent_command_text(command_text: str) -> bool:
         len(command_parts) == 1
         and URGENT_COMMAND_TOKEN_PATTERN.fullmatch(command_parts[0]) is not None
     )
+
+
+def parse_delete_command_text(command_text: str) -> str | None:
+    """Parse the sole task reference accepted by `/delete`."""
+    command_parts = command_text.strip().split()
+    if (
+        len(command_parts) != 2
+        or DELETE_COMMAND_TOKEN_PATTERN.fullmatch(command_parts[0]) is None
+        or TASK_REF_PATTERN.fullmatch(command_parts[1]) is None
+    ):
+        return None
+    return command_parts[1].upper()
 
 
 def parse_remind_command_text(command_text: str) -> ParsedRemindCommand:
