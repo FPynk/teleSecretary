@@ -12,6 +12,8 @@
 - Added repository-local coding guidance and a canonical architecture document
   covering package boundaries, owner-scoped application APIs, and the planned
   LLM integration boundary.
+- Added `/due` for owner-scoped overdue and upcoming deadline tasks, using a
+  deterministic seven-day local-calendar window and localized deadline labels.
 
 ## 2026-08-16
 

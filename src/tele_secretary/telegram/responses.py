@@ -6,7 +6,7 @@ from datetime import datetime
 
 from tele_secretary.app.help import get_help_text
 from tele_secretary.app.reminder_time_parser import ReminderTimeWarning
-from tele_secretary.app.tasks import FocusTaskRecord, TaskRecord
+from tele_secretary.app.tasks import DueTaskRecord, FocusTaskRecord, TaskRecord
 from tele_secretary.time_utils import utc_to_local
 
 
@@ -36,6 +36,23 @@ def build_today_focus_response(focus_tasks: tuple[FocusTaskRecord, ...]) -> str:
     for index, focus_task in enumerate(focus_tasks, start=1):
         lines.append(
             f"{index}. {focus_task.task.ref} — {focus_task.task.title} — {focus_task.reason}"
+        )
+    return "\n".join(lines)
+
+
+def build_due_usage_response() -> str:
+    return "Usage: /due"
+
+
+def build_due_tasks_response(due_tasks: tuple[DueTaskRecord, ...], timezone_name: str) -> str:
+    if not due_tasks:
+        return "No overdue or upcoming tasks."
+
+    lines = ["Due tasks:"]
+    for due_task in due_tasks:
+        deadline = _format_optional_datetime(due_task.task.deadline_at, timezone_name)
+        lines.append(
+            f"{due_task.task.ref} â€” {due_task.task.title} â€” {due_task.timing} â€” {deadline}"
         )
     return "\n".join(lines)
 

@@ -134,6 +134,12 @@ class FocusTaskRecord:
     reason: str
 
 
+@dataclass(frozen=True)
+class DueTaskRecord:
+    task: TaskRecord
+    timing: str
+
+
 class _UnsetValue:
     pass
 
@@ -463,6 +469,48 @@ def get_focus_today(
         focused_tasks.append(FocusTaskRecord(task=task, reason=reason))
 
     return tuple(sorted(focused_tasks, key=_focus_task_sort_key))
+
+
+def list_due_tasks(
+    conn: Connection,
+    *,
+    user_id: str,
+    timezone_name: str,
+    now: datetime | None = None,
+) -> tuple[DueTaskRecord, ...]:
+    """Return active owned tasks that are overdue or due in the next seven local days."""
+    now_utc = ensure_utc(now or utc_now())
+    local_now = utc_to_local(now_utc, timezone_name)
+    window_end_local = datetime.combine(
+        local_now.date() + timedelta(days=8),
+        time.min,
+        local_now.tzinfo,
+    )
+    window_end_utc = ensure_utc(window_end_local)
+
+    due_tasks = []
+    for task in list_active_tasks(conn, user_id=user_id):
+        deadline_at = _parse_stored_datetime(task.deadline_at)
+        if deadline_at is None or deadline_at >= window_end_utc:
+            continue
+
+        if deadline_at < now_utc:
+            timing = "overdue"
+        elif utc_to_local(deadline_at, timezone_name).date() == local_now.date():
+            timing = "due today"
+        else:
+            timing = "upcoming"
+        due_tasks.append(DueTaskRecord(task=task, timing=timing))
+
+    return tuple(
+        sorted(
+            due_tasks,
+            key=lambda due_task: (
+                _parse_stored_datetime(due_task.task.deadline_at),
+                int(due_task.task.ref[1:]),
+            ),
+        )
+    )
 
 
 def _parse_stored_datetime(value: str | None) -> datetime | None:
