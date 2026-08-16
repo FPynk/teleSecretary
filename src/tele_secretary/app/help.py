@@ -94,6 +94,7 @@ def get_help_text(topic: str | None = None) -> str:
             "- /reopen T<number> - reopen a completed task",
             "- /delete T<number> - remove a task",
             "- /today - show your deterministic focus list",
+            "- /due - show overdue and upcoming tasks",
             "- /remind T<number> <time> - set a task reminder",
             "- /unremind T<number> - cancel a task reminder",
             "- /urgent - show high-priority tasks",

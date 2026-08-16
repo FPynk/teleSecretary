@@ -32,6 +32,7 @@ from tele_secretary.app.tasks import (
     get_task_details_by_ref,
     get_focus_today,
     list_active_tasks,
+    list_due_tasks,
     list_urgent_tasks,
     reopen_task,
     soft_delete_task,
@@ -52,6 +53,8 @@ from tele_secretary.telegram.responses import (
     build_addtask_usage_response,
     build_done_error_response,
     build_done_usage_response,
+    build_due_tasks_response,
+    build_due_usage_response,
     build_delete_error_response,
     build_delete_usage_response,
     build_edit_error_response,
@@ -94,6 +97,7 @@ ADD_TASK_DUE_LIKE_PATTERN = re.compile(r"(?<!\S)-{1,2}due")
 TASK_REF_PATTERN = re.compile(r"T[1-9]\d*", re.IGNORECASE)
 REMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/remind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 UNREMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/unremind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
+DUE_COMMAND_TOKEN_PATTERN = re.compile(r"/due(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 URGENT_COMMAND_TOKEN_PATTERN = re.compile(r"/urgent(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 DELETE_COMMAND_TOKEN_PATTERN = re.compile(r"/delete(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 SCHEDULER_BOT_DATA_KEY = "_tele_secretary_reminder_scheduler"
@@ -170,6 +174,7 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("reopen", _reopen_handler(config)))
     application.add_handler(CommandHandler("delete", _delete_handler(config)))
     application.add_handler(CommandHandler("today", _today_handler(config)))
+    application.add_handler(CommandHandler("due", _due_handler(config)))
     application.add_handler(CommandHandler("urgent", _urgent_handler(config)))
     application.add_handler(CommandHandler("remind", _remind_handler(config)))
     application.add_handler(CommandHandler("unremind", _unremind_handler(config)))
@@ -586,6 +591,40 @@ def _today_handler(config: AppConfig) -> Any:
     return handler
 
 
+def _due_handler(config: AppConfig) -> Any:
+    """Build the owner-scoped `/due` command handler."""
+    async def handler(update: Any, context: Any) -> None:
+        """List overdue and upcoming owned tasks in the sender's timezone."""
+        del context
+        telegram_user_id = await _get_authorized_telegram_user_id(update, config)
+        if telegram_user_id is None:
+            return
+        if update.message is None:
+            return
+        if not parse_due_command_text(update.message.text or ""):
+            await update.message.reply_text(build_due_usage_response())
+            return
+
+        conn = connect(config.db_path)
+        try:
+            user = get_or_create_telegram_user(
+                conn,
+                telegram_user_id=telegram_user_id,
+                default_timezone=config.user_timezone,
+            )
+            due_tasks = list_due_tasks(
+                conn,
+                user_id=user.user_id,
+                timezone_name=user.timezone,
+            )
+        finally:
+            conn.close()
+
+        await update.message.reply_text(build_due_tasks_response(due_tasks, user.timezone))
+
+    return handler
+
+
 def _urgent_handler(config: AppConfig) -> Any:
     """Build the owner-scoped `/urgent` command handler."""
     async def handler(update: Any, context: Any) -> None:
@@ -763,6 +802,15 @@ def parse_reopen_command_text(command_text: str) -> str | None:
 def parse_done_command_text(command_text: str) -> str | None:
     """Parse a task reference from a `/done` command."""
     return parse_show_command_text(command_text)
+
+
+def parse_due_command_text(command_text: str) -> bool:
+    """Return whether text is an argument-free `/due` command envelope."""
+    command_parts = command_text.strip().split()
+    return (
+        len(command_parts) == 1
+        and DUE_COMMAND_TOKEN_PATTERN.fullmatch(command_parts[0]) is not None
+    )
 
 
 def parse_urgent_command_text(command_text: str) -> bool:
