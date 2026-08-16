@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-16
+
+- Split due-reminder claims into mutually exclusive first-attempt and retry
+  paths. First attempts require no recorded delivery attempt.
+- Added bounded, atomic retry claiming after fixed 1-, 5-, and 15-minute
+  delays, ordered by the next eligible retry time without changing attempt
+  metadata.
+
 ## 2026-08-14
 
 - Completing or soft-deleting a task now atomically cancels that task's pending

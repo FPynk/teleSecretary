@@ -132,6 +132,11 @@ _REMINDER_COLUMNS = """
 DEFAULT_CLAIM_BATCH_SIZE = 50
 MAX_CLAIM_BATCH_SIZE = 100
 MAX_DELIVERY_FAILURE_CODE_LENGTH = 64
+REMINDER_RETRY_DELAYS = {
+    1: timedelta(minutes=1),
+    2: timedelta(minutes=5),
+    3: timedelta(minutes=15),
+}
 
 
 def create_reminder(
@@ -458,11 +463,12 @@ def claim_due_reminders(
     now: datetime | None = None,
     batch_size: int = DEFAULT_CLAIM_BATCH_SIZE,
 ) -> tuple[ClaimedReminderRecord, ...]:
-    _validate_claim_batch_size(batch_size)
-    if conn.in_transaction:
-        raise RuntimeError("claim_due_reminders requires a connection without an active transaction.")
+    """Claim the next bounded batch of due reminders that have not been attempted."""
 
-    claim_time = ensure_utc(now or utc_now())
+    _validate_claim_batch_size(batch_size)
+    _require_no_active_transaction(conn, "claim_due_reminders")
+
+    claim_time = _normalize_claim_time(now or utc_now())
     claim_time_text = to_storage_text(claim_time)
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -475,6 +481,8 @@ def claim_due_reminders(
                 JOIN items ON items.id = reminders.item_id
                 WHERE reminders.status = 'pending'
                     AND reminders.scheduled_at <= ?
+                    AND reminders.retry_count = 0
+                    AND reminders.last_attempted_at IS NULL
                     AND items.status = 'active'
                     AND items.deleted_at IS NULL
                 ORDER BY reminders.scheduled_at ASC, reminders.id ASC
@@ -487,50 +495,89 @@ def claim_due_reminders(
             conn.commit()
             return ()
 
-        placeholders = ", ".join("?" for _ in candidate_ids)
-        update_cursor = conn.execute(
-            f"""
-            UPDATE reminders
-            SET status = 'processing', updated_at = ?
-            WHERE status = 'pending' AND id IN ({placeholders})
-            """,
-            (claim_time_text, *candidate_ids),
-        )
-        if update_cursor.rowcount != len(candidate_ids):
-            raise RuntimeError("Claimed reminder count did not match the selected batch.")
-
-        claimed_rows = conn.execute(
-            f"""
-            SELECT
-                reminders.id AS reminder_id,
-                reminders.item_id AS task_id,
-                items.user_id,
-                users.telegram_user_id,
-                users.timezone AS user_timezone,
-                items.pub_ref AS task_ref,
-                items.title AS task_title,
-                reminders.scheduled_at,
-                reminders.status,
-                reminders.delivery_channel,
-                reminders.retry_count,
-                reminders.updated_at AS claimed_at
-            FROM reminders
-            JOIN items ON items.id = reminders.item_id
-            JOIN users ON users.id = items.user_id
-            WHERE reminders.id IN ({placeholders})
-            ORDER BY reminders.scheduled_at ASC, reminders.id ASC
-            """,
-            candidate_ids,
-        ).fetchall()
-        if len(claimed_rows) != len(candidate_ids) or any(
-            row["status"] != "processing" for row in claimed_rows
-        ):
-            raise RuntimeError("Claimed reminder context did not match the selected batch.")
-
-        claimed_reminders = tuple(
-            _claimed_reminder_from_row(row) for row in claimed_rows
+        claimed_reminders = _claim_selected_reminders(
+            conn,
+            candidate_ids=candidate_ids,
+            claim_time_text=claim_time_text,
         )
         conn.commit()
+        return claimed_reminders
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def claim_due_reminder_retries(
+    conn: Connection,
+    *,
+    now: datetime | None = None,
+    batch_size: int = DEFAULT_CLAIM_BATCH_SIZE,
+) -> tuple[ClaimedReminderRecord, ...]:
+    """Claim the next bounded batch of pending reminders whose retry delay has elapsed."""
+
+    _validate_claim_batch_size(batch_size)
+    _require_no_active_transaction(conn, "claim_due_reminder_retries")
+
+    claim_time = _normalize_claim_time(now or utc_now())
+    claim_time_text = to_storage_text(claim_time)
+    retry_cutoffs = tuple(
+        to_storage_text(claim_time - REMINDER_RETRY_DELAYS[retry_count])
+        for retry_count in (1, 2, 3)
+    )
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        candidate_ids = tuple(
+            row["id"]
+            for row in conn.execute(
+                """
+                SELECT reminders.id
+                FROM reminders
+                JOIN items ON items.id = reminders.item_id
+                WHERE reminders.status = 'pending'
+                    AND reminders.retry_count BETWEEN 1 AND 3
+                    AND reminders.last_attempted_at IS NOT NULL
+                    AND strftime('%Y-%m-%dT%H:%M:%S+00:00', reminders.last_attempted_at)
+                        = reminders.last_attempted_at
+                    AND (
+                        (reminders.retry_count = 1 AND reminders.last_attempted_at <= ?)
+                        OR (reminders.retry_count = 2 AND reminders.last_attempted_at <= ?)
+                        OR (reminders.retry_count = 3 AND reminders.last_attempted_at <= ?)
+                    )
+                    AND items.status = 'active'
+                    AND items.deleted_at IS NULL
+                ORDER BY
+                    CASE reminders.retry_count
+                        WHEN 1 THEN strftime(
+                            '%Y-%m-%dT%H:%M:%S+00:00',
+                            datetime(reminders.last_attempted_at, '+1 minute')
+                        )
+                        WHEN 2 THEN strftime(
+                            '%Y-%m-%dT%H:%M:%S+00:00',
+                            datetime(reminders.last_attempted_at, '+5 minutes')
+                        )
+                        WHEN 3 THEN strftime(
+                            '%Y-%m-%dT%H:%M:%S+00:00',
+                            datetime(reminders.last_attempted_at, '+15 minutes')
+                        )
+                    END ASC,
+                    reminders.id ASC
+                LIMIT ?
+                """,
+                (*retry_cutoffs, batch_size),
+            ).fetchall()
+        )
+        if not candidate_ids:
+            conn.commit()
+            LOGGER.info("Claimed due reminder retries count=%s", 0)
+            return ()
+
+        claimed_reminders = _claim_selected_reminders(
+            conn,
+            candidate_ids=candidate_ids,
+            claim_time_text=claim_time_text,
+        )
+        conn.commit()
+        LOGGER.info("Claimed due reminder retries count=%s", len(claimed_reminders))
         return claimed_reminders
     except Exception:
         conn.rollback()
@@ -1014,6 +1061,71 @@ def _normalize_recovery_evaluation_time(evaluation_time: datetime) -> datetime:
     """Return the evaluation clock as a second-precision UTC datetime."""
 
     return ensure_utc(evaluation_time).replace(microsecond=0)
+
+
+def _normalize_claim_time(claim_time: datetime) -> datetime:
+    """Return the claim clock as a second-precision UTC datetime."""
+
+    return ensure_utc(claim_time).replace(microsecond=0)
+
+
+def _claim_selected_reminders(
+    conn: Connection,
+    *,
+    candidate_ids: tuple[str, ...],
+    claim_time_text: str,
+) -> tuple[ClaimedReminderRecord, ...]:
+    """Transition selected pending reminders and return their delivery context in candidate order."""
+
+    placeholders = ", ".join("?" for _ in candidate_ids)
+    update_cursor = conn.execute(
+        f"""
+        UPDATE reminders
+        SET status = 'processing', updated_at = ?
+        WHERE status = 'pending' AND id IN ({placeholders})
+        """,
+        (claim_time_text, *candidate_ids),
+    )
+    if update_cursor.rowcount != len(candidate_ids):
+        raise RuntimeError("Claimed reminder count did not match the selected batch.")
+
+    claimed_rows = conn.execute(
+        f"""
+        SELECT
+            reminders.id AS reminder_id,
+            reminders.item_id AS task_id,
+            items.user_id,
+            users.telegram_user_id,
+            users.timezone AS user_timezone,
+            items.pub_ref AS task_ref,
+            items.title AS task_title,
+            reminders.scheduled_at,
+            reminders.status,
+            reminders.delivery_channel,
+            reminders.retry_count,
+            reminders.updated_at AS claimed_at
+        FROM reminders
+        JOIN items ON items.id = reminders.item_id
+        JOIN users ON users.id = items.user_id
+        WHERE reminders.id IN ({placeholders})
+        """,
+        candidate_ids,
+    ).fetchall()
+    claimed_rows_by_id = {row["reminder_id"]: row for row in claimed_rows}
+    if (
+        len(claimed_rows_by_id) != len(candidate_ids)
+        or any(
+            reminder_id not in claimed_rows_by_id
+            or claimed_rows_by_id[reminder_id]["status"] != "processing"
+            or claimed_rows_by_id[reminder_id]["claimed_at"] != claim_time_text
+            for reminder_id in candidate_ids
+        )
+    ):
+        raise RuntimeError("Claimed reminder context did not match the selected batch.")
+    return tuple(
+        _claimed_reminder_from_row(claimed_rows_by_id[reminder_id])
+        for reminder_id in candidate_ids
+    )
 
 
 def _validate_claimed_reminders(
