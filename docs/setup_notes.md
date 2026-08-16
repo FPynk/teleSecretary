@@ -134,9 +134,10 @@ SECRETARY_USER_TIMEZONE=America/Chicago
 SECRETARY_LOG_LEVEL=INFO
 ```
 
-`TELEGRAM_ALLOWED_USER_IDS` should contain your Telegram ID. TeleSecretary is
-currently a one-user service, and the first allowed ID is treated as the task
-owner. If this value is empty, Telegram commands are disabled.
+`TELEGRAM_ALLOWED_USER_IDS` contains one or more authorized Telegram IDs. Each
+authorized sender has an independent owner record, tasks, reminders, and
+timezone; allowlist order is not used as an ownership fallback. If this value
+is empty, Telegram commands are disabled.
 
 The Docker Compose file overrides the data paths inside the container:
 
@@ -171,6 +172,11 @@ Start TeleSecretary:
 ```bash
 docker compose up -d
 ```
+
+After Telegram starts, the reminder worker runs one cycle immediately and then
+every 30 seconds. It uses bounded batches, so a large backlog continues over
+later cycles rather than keeping a single SQLite transaction or network call
+open indefinitely.
 
 Run a health check:
 

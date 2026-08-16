@@ -20,8 +20,11 @@ data model and the first direct Telegram task commands:
 - unit tests for the foundation pieces
 
 Reminder creation is available through `/remind`. `/unremind` cancels a sole
-pending reminder and safely asks for clarification when several exist. Delivery,
-natural-language parsing, and LLM integration are later phases.
+pending reminder and safely asks for clarification when several exist. The bot
+also runs one reminder-processing cycle at startup and then every 30 seconds:
+it recovers abandoned leases, delivers due reminders, summarizes four or more
+moderately stale reminders for one owner, and processes eligible retries.
+Natural-language parsing and LLM integration are later phases.
 
 ## Telegram Commands
 

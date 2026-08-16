@@ -40,6 +40,7 @@ from tele_secretary.app.users import (
 )
 from tele_secretary.persistence.connection import connect
 from tele_secretary.persistence.migrations import apply_migrations
+from tele_secretary.scheduler.runner import Scheduler, process_reminder_cycle
 from tele_secretary.time_utils import local_to_utc
 from tele_secretary.telegram.edit_command import (
     EditTaskCommandParseError,
@@ -86,6 +87,7 @@ ADD_TASK_DUE_LIKE_PATTERN = re.compile(r"(?<!\S)-{1,2}due")
 TASK_REF_PATTERN = re.compile(r"T[1-9]\d*", re.IGNORECASE)
 REMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/remind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 UNREMIND_COMMAND_TOKEN_PATTERN = re.compile(r"/unremind(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
+SCHEDULER_BOT_DATA_KEY = "_tele_secretary_reminder_scheduler"
 
 
 @dataclass(frozen=True)
@@ -142,7 +144,13 @@ def build_application(config: AppConfig) -> Any:
             "Install project dependencies before starting the bot."
         ) from exc
 
-    application = Application.builder().token(config.telegram_bot_token).build()
+    application = (
+        Application.builder()
+        .token(config.telegram_bot_token)
+        .post_init(_scheduler_post_init(config))
+        .post_stop(_scheduler_post_stop)
+        .build()
+    )
     application.add_handler(CommandHandler("ping", _ping_handler(config)))
     application.add_handler(CommandHandler("help", _help_handler(config)))
     application.add_handler(CommandHandler("list", _list_handler(config)))
@@ -155,6 +163,35 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("remind", _remind_handler(config)))
     application.add_handler(CommandHandler("unremind", _unremind_handler(config)))
     return application
+
+
+def _scheduler_post_init(config: AppConfig) -> Any:
+    """Build the Telegram lifecycle callback that starts reminder processing."""
+
+    async def post_init(application: Any) -> None:
+        """Start one scheduler after Telegram and the migrated database are ready."""
+
+        async def run_cycle(cycle_time: datetime) -> None:
+            await process_reminder_cycle(
+                db_path=config.db_path,
+                allowed_telegram_user_ids=config.telegram_allowed_user_ids,
+                send_message=application.bot.send_message,
+                cycle_time=cycle_time,
+            )
+
+        scheduler = Scheduler(run_cycle=run_cycle)
+        application.bot_data[SCHEDULER_BOT_DATA_KEY] = scheduler
+        scheduler.start()
+
+    return post_init
+
+
+async def _scheduler_post_stop(application: Any) -> None:
+    """Stop the scheduler before the Telegram application shuts down."""
+
+    scheduler = application.bot_data.get(SCHEDULER_BOT_DATA_KEY)
+    if scheduler is not None:
+        await scheduler.stop()
 
 
 def _ping_handler(config: AppConfig) -> Any:
