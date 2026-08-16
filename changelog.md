@@ -32,6 +32,8 @@
 - Added bounded, atomic retry claiming after fixed 1-, 5-, and 15-minute
   delays, ordered by the next eligible retry time without changing attempt
   metadata.
+- Added `/urgent` for owner-scoped active `top_priority` and `high` tasks,
+  ordered deterministically by urgency and numeric task reference.
 - Added atomic recovery for abandoned five-minute `processing` leases. Stale
   active-task reminders return to pending; stale inactive-task reminders are
   cancelled while retaining their attempt history.

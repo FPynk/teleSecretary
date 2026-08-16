@@ -15,7 +15,7 @@ data model and the first direct Telegram task commands:
 - task-linked reminder persistence with lifecycle constraints and indexes
 - application-level health and help actions
 - persistent per-user public refs on shared items (`T1` for tasks and `N1` for notes)
-- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, `/edit`, `/done`, `/reopen`, `/delete`, `/today`, `/due`, `/remind`, and `/unremind`
+- Telegram long-polling bootstrap with `/ping`, `/help`, `/list`, `/addtask`, `/show`, `/edit`, `/done`, `/reopen`, `/delete`, `/today`, `/due`, `/urgent`, `/remind`, and `/unremind`
 - Docker and Docker Compose setup
 - unit tests for the foundation pieces
 
@@ -47,6 +47,7 @@ integration rules are documented in [docs/architecture.md](docs/architecture.md)
 - `/due` - show overdue and upcoming tasks
 - `/remind T<number> <time>` - set a task reminder
 - `/unremind T<number>` - cancel a task's sole pending reminder
+- `/urgent` - show high-priority tasks
 
 `/remind` accepts deterministic V1 times such as `tomorrow 2pm`, `fri 14:30`,
 and `25/07/2026 2:30 PM`. Expressions and confirmation times use each owner's

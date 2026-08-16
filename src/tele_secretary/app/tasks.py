@@ -513,6 +513,25 @@ def list_due_tasks(
     )
 
 
+def list_urgent_tasks(
+    conn: Connection,
+    *,
+    user_id: str,
+) -> tuple[TaskRecord, ...]:
+    """Return the owner's active high and top-priority tasks in stable order."""
+    urgency_priority = {"top_priority": 0, "high": 1}
+    return tuple(
+        sorted(
+            (
+                task
+                for task in list_active_tasks(conn, user_id=user_id)
+                if task.urgency in urgency_priority
+            ),
+            key=lambda task: (urgency_priority[task.urgency], int(task.ref[1:])),
+        )
+    )
+
+
 def _parse_stored_datetime(value: str | None) -> datetime | None:
     return None if value is None else ensure_utc(datetime.fromisoformat(value))
 

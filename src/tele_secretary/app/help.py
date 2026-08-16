@@ -97,6 +97,7 @@ def get_help_text(topic: str | None = None) -> str:
             "- /due - show overdue and upcoming tasks",
             "- /remind T<number> <time> - set a task reminder",
             "- /unremind T<number> - cancel a task reminder",
+            "- /urgent - show high-priority tasks",
             "- /help [topic] - show command help",
             "",
             "Use /help edit for detailed edit instructions.",
