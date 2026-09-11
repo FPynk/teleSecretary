@@ -31,6 +31,12 @@ def create_task_tool(
     _validate_model_optional_text_field(deadline_type, "deadline_type")
     _validate_model_optional_text_field(urgency, "urgency")
     _validate_model_estimated_minutes(estimated_minutes)
+    deadline = _parse_deadline_at(deadline_at)
+    category = _resolve_owner_category_id(
+            conn,
+            user_id=user_id,
+            category_name=category_name,
+        )
 
     return create_task(
         conn,
@@ -38,15 +44,11 @@ def create_task_tool(
         title=title,
         source="telegram_nl",
         description=description,
-        deadline_at=_parse_deadline_at(deadline_at),
+        deadline_at=deadline, 
         deadline_type=deadline_type,
         estimated_minutes=estimated_minutes,
         urgency=urgency,
-        category_id=_resolve_owner_category_id(
-            conn,
-            user_id=user_id,
-            category_name=category_name,
-        ),
+        category_id=category,
     )
 
 
