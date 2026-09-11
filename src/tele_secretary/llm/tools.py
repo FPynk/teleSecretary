@@ -19,12 +19,14 @@ def create_task_tool(
     estimated_minutes: int | None = None,
     urgency: str | None = None,
 ) -> TaskRecord:
+    # TODO edit this to allow the LLM to set a category
     """Create a task using only the fields the LLM may propose."""
     _validate_model_required_text_field(title, "title")
     _validate_model_optional_text_field(description, "description")
     _validate_model_optional_text_field(deadline_type, "deadline_type")
     _validate_model_optional_text_field(urgency, "urgency")
     _validate_model_estimated_minutes(estimated_minutes)
+    # TODO Create a new validate for the category
 
     return create_task(
         conn,

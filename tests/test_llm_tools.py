@@ -16,7 +16,8 @@ from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.llm.tools import create_task_tool
 from tele_secretary.persistence.migrations import apply_migrations
 
-
+# TODO: Update the tests to take into account the new category function, for all of the pre-existing ones just have goldflow
+# Add 2 more failing ones with invalid category inputs
 class CreateTaskToolTests(unittest.TestCase):
     """Verify that LLM task proposals remain safely owner-scoped."""
 
