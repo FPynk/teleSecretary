@@ -16,13 +16,18 @@ from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.llm.tools import create_task_tool
 from tele_secretary.persistence.migrations import apply_migrations
 
-
 class CreateTaskToolTests(unittest.TestCase):
     """Verify that LLM task proposals remain safely owner-scoped."""
 
     def test_creates_task_with_allowed_llm_fields(self) -> None:
         """The tool passes permitted fields to the task service."""
         with self.open_seeded_database() as (conn, owner_user_id, _):
+            self.insert_category(
+                conn,
+                category_id="category-owner-work",
+                user_id=owner_user_id,
+                name="Work",
+            )
             task = create_task_tool(
                 conn,
                 user_id=owner_user_id,
@@ -32,6 +37,7 @@ class CreateTaskToolTests(unittest.TestCase):
                 deadline_type="hard",
                 estimated_minutes=30,
                 urgency="high",
+                category_name="Work",
             )
 
             self.assertEqual(task.title, "Submit expense report")
@@ -41,6 +47,8 @@ class CreateTaskToolTests(unittest.TestCase):
             self.assertEqual(task.deadline_type, "hard")
             self.assertEqual(task.estimated_minutes, 30)
             self.assertEqual(task.urgency, "high")
+            self.assertEqual(task.category_id, "category-owner-work")
+            self.assertEqual(task.category_name, "Work")
 
     def test_rejects_blank_title_using_task_service_validation(self) -> None:
         """Blank titles remain subject to the canonical task validation."""
@@ -86,6 +94,48 @@ class CreateTaskToolTests(unittest.TestCase):
             self.assertEqual(estimate_error.exception.code, "invalid_estimated_minutes")
             self.assertEqual(urgency_error.exception.code, "invalid_urgency")
 
+    def test_rejects_an_unknown_category_name(self) -> None:
+        """The model cannot create a category by proposing an unknown name."""
+        with self.open_seeded_database() as (conn, owner_user_id, _):
+            self.insert_category(
+                conn,
+                category_id="category-owner-work",
+                user_id=owner_user_id,
+                name="Work",
+            )
+
+            with self.assertRaises(TaskValidationError) as raised:
+                create_task_tool(
+                    conn,
+                    user_id=owner_user_id,
+                    title="Send expense report",
+                    category_name="Finance",
+                )
+
+            self.assertEqual(raised.exception.code, "invalid_category")
+            self.assertEqual(list_active_tasks(conn, user_id=owner_user_id), ())
+
+    def test_rejects_a_category_owned_by_another_user(self) -> None:
+        """The model cannot attach another owner's category to this task."""
+        with self.open_seeded_database() as (conn, owner_user_id, other_user_id):
+            self.insert_category(
+                conn,
+                category_id="category-other-work",
+                user_id=other_user_id,
+                name="Work",
+            )
+
+            with self.assertRaises(TaskValidationError) as raised:
+                create_task_tool(
+                    conn,
+                    user_id=owner_user_id,
+                    title="Prepare quarterly plan",
+                    category_name="Work",
+                )
+
+            self.assertEqual(raised.exception.code, "invalid_category")
+            self.assertEqual(list_active_tasks(conn, user_id=owner_user_id), ())
+
     def test_creates_tasks_only_for_the_trusted_owner_argument(self) -> None:
         """The tool does not expose any model-controlled owner field."""
         with self.open_seeded_database() as (conn, owner_user_id, other_user_id):
@@ -109,16 +159,27 @@ class CreateTaskToolTests(unittest.TestCase):
                 [other_task.id],
             )
 
-    def test_does_not_accept_model_selected_task_source(self) -> None:
-        """The tool fixes source to the Telegram natural-language flow."""
-        with self.open_seeded_database() as (conn, owner_user_id, _):
-            with self.assertRaises(TypeError):
-                create_task_tool(
-                    conn,
-                    user_id=owner_user_id,
-                    title="Buy printer paper",
-                    source="manual_entry",  # type: ignore[call-arg]
-                )
+    def test_does_not_accept_model_selected_internal_fields(self) -> None:
+        """The model cannot select source or bypass category-name resolution."""
+        with self.open_seeded_database() as (conn, owner_user_id, other_user_id):
+            self.insert_category(
+                conn,
+                category_id="category-other-work",
+                user_id=other_user_id,
+                name="Work",
+            )
+            for field_name, value in (
+                ("source", "manual_entry"),
+                ("category_id", "category-other-work"),
+            ):
+                with self.subTest(field_name=field_name):
+                    with self.assertRaises(TypeError):
+                        create_task_tool(
+                            conn,
+                            user_id=owner_user_id,
+                            title="Buy printer paper",
+                            **{field_name: value},
+                        )
 
     @contextmanager
     def open_seeded_database(self) -> Iterator[tuple[Connection, str, str]]:
@@ -138,3 +199,21 @@ class CreateTaskToolTests(unittest.TestCase):
                     timezone="America/Chicago",
                 )
                 yield conn, owner_user_id, other_user_id
+
+    def insert_category(
+        self,
+        conn: Connection,
+        *,
+        category_id: str,
+        user_id: str,
+        name: str,
+    ) -> None:
+        """Seed an owned category for LLM tool integration tests."""
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO categories (id, user_id, name, created_at, archived_at)
+                VALUES (?, ?, ?, '2026-09-10T00:00:00+00:00', NULL)
+                """,
+                (category_id, user_id, name),
+            )

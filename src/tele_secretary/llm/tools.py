@@ -5,7 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from sqlite3 import Connection
 
-from tele_secretary.app.tasks import TaskRecord, TaskValidationError, create_task
+from tele_secretary.app.tasks import (
+    TaskRecord,
+    TaskValidationError,
+    create_task,
+    list_categories_and_tags,
+)
 
 
 def create_task_tool(
@@ -18,6 +23,7 @@ def create_task_tool(
     deadline_type: str | None = None,
     estimated_minutes: int | None = None,
     urgency: str | None = None,
+    category_name: str | None = None,
 ) -> TaskRecord:
     """Create a task using only the fields the LLM may propose."""
     _validate_model_required_text_field(title, "title")
@@ -25,6 +31,12 @@ def create_task_tool(
     _validate_model_optional_text_field(deadline_type, "deadline_type")
     _validate_model_optional_text_field(urgency, "urgency")
     _validate_model_estimated_minutes(estimated_minutes)
+    deadline = _parse_deadline_at(deadline_at)
+    category = _resolve_owner_category_id(
+            conn,
+            user_id=user_id,
+            category_name=category_name,
+        )
 
     return create_task(
         conn,
@@ -32,10 +44,11 @@ def create_task_tool(
         title=title,
         source="telegram_nl",
         description=description,
-        deadline_at=_parse_deadline_at(deadline_at),
+        deadline_at=deadline, 
         deadline_type=deadline_type,
         estimated_minutes=estimated_minutes,
         urgency=urgency,
+        category_id=category,
     )
 
 
@@ -87,3 +100,25 @@ def _validate_model_estimated_minutes(estimated_minutes: int | None) -> None:
             "invalid_estimated_minutes",
             "estimated_minutes must be a positive integer.",
         )
+
+
+def _resolve_owner_category_id(
+    conn: Connection,
+    *,
+    user_id: str,
+    category_name: str | None,
+) -> str | None:
+    """Resolve an exact active category name belonging to the trusted owner."""
+    _validate_model_optional_text_field(category_name, "category_name")
+    if category_name is None:
+        return None
+
+    categories = list_categories_and_tags(conn, user_id=user_id).categories
+    for category in categories:
+        if category.name == category_name:
+            return category.id
+
+    raise TaskValidationError(
+        "invalid_category",
+        "Category does not exist for this user.",
+    )
