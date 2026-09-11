@@ -16,10 +16,6 @@ from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.llm.tools import create_task_tool
 from tele_secretary.persistence.migrations import apply_migrations
 
-# TODO
-# For the currently existing tests, have the confidence scoring be a valid value
-# have 1 test to cycle through all the possible correct values of confidence and that they all work
-# have 1 test to try invalid confidence values
 class CreateTaskToolTests(unittest.TestCase):
     """Verify that LLM task proposals remain safely owner-scoped."""
 
@@ -42,6 +38,7 @@ class CreateTaskToolTests(unittest.TestCase):
                 estimated_minutes=30,
                 urgency="high",
                 category_name="Work",
+                parse_confidence=0.5,
             )
 
             self.assertEqual(task.title, "Submit expense report")
@@ -53,12 +50,19 @@ class CreateTaskToolTests(unittest.TestCase):
             self.assertEqual(task.urgency, "high")
             self.assertEqual(task.category_id, "category-owner-work")
             self.assertEqual(task.category_name, "Work")
+            self.assertEqual(task.parse_status, "parsed")
+            self.assertEqual(task.parse_confidence, 0.5)
 
     def test_rejects_blank_title_using_task_service_validation(self) -> None:
         """Blank titles remain subject to the canonical task validation."""
         with self.open_seeded_database() as (conn, owner_user_id, _):
             with self.assertRaises(TaskValidationError) as raised:
-                create_task_tool(conn, user_id=owner_user_id, title="   ")
+                create_task_tool(
+                    conn,
+                    user_id=owner_user_id,
+                    title="   ",
+                    parse_confidence=1.0,
+                )
 
             self.assertEqual(raised.exception.code, "invalid_title")
             self.assertEqual(list_active_tasks(conn, user_id=owner_user_id), ())
@@ -72,6 +76,7 @@ class CreateTaskToolTests(unittest.TestCase):
                     user_id=owner_user_id,
                     title="Schedule dentist",
                     deadline_at="2026-09-10T14:30:00",
+                    parse_confidence=0.5,
                 )
 
             self.assertEqual(raised.exception.code, "invalid_deadline_at")
@@ -86,6 +91,7 @@ class CreateTaskToolTests(unittest.TestCase):
                     user_id=owner_user_id,
                     title="Prepare slides",
                     estimated_minutes=0,
+                    parse_confidence=0.5,
                 )
             with self.assertRaises(TaskValidationError) as urgency_error:
                 create_task_tool(
@@ -93,10 +99,54 @@ class CreateTaskToolTests(unittest.TestCase):
                     user_id=owner_user_id,
                     title="Prepare slides",
                     urgency="critical",
+                    parse_confidence=0.5,
                 )
 
             self.assertEqual(estimate_error.exception.code, "invalid_estimated_minutes")
             self.assertEqual(urgency_error.exception.code, "invalid_urgency")
+
+    def test_accepts_valid_parse_confidence_values(self) -> None:
+        """Boundary and representative confidence values persist unchanged."""
+        with self.open_seeded_database() as (conn, owner_user_id, _):
+            for parse_confidence in (0.0, 0.5, 1.0):
+                with self.subTest(parse_confidence=parse_confidence):
+                    task = create_task_tool(
+                        conn,
+                        user_id=owner_user_id,
+                        title=f"Confidence {parse_confidence}",
+                        parse_confidence=parse_confidence,
+                    )
+
+                    self.assertEqual(task.parse_status, "parsed")
+                    self.assertEqual(task.parse_confidence, parse_confidence)
+
+    def test_accepts_missing_parse_confidence(self) -> None:
+        """A successful LLM proposal may omit diagnostic confidence."""
+        with self.open_seeded_database() as (conn, owner_user_id, _):
+            task = create_task_tool(
+                conn,
+                user_id=owner_user_id,
+                title="Task without confidence",
+            )
+
+            self.assertEqual(task.parse_status, "parsed")
+            self.assertIsNone(task.parse_confidence)
+
+    def test_rejects_invalid_parse_confidence_values(self) -> None:
+        """Invalid confidence cannot make a task write succeed."""
+        with self.open_seeded_database() as (conn, owner_user_id, _):
+            for parse_confidence in (-0.1, 1.1, True, "0.5"):
+                with self.subTest(parse_confidence=parse_confidence):
+                    with self.assertRaises(TaskValidationError) as raised:
+                        create_task_tool(
+                            conn,
+                            user_id=owner_user_id,
+                            title="Invalid confidence",
+                            parse_confidence=parse_confidence,  # type: ignore[arg-type]
+                        )
+
+                    self.assertEqual(raised.exception.code, "invalid_parse_confidence")
+                    self.assertEqual(list_active_tasks(conn, user_id=owner_user_id), ())
 
     def test_rejects_an_unknown_category_name(self) -> None:
         """The model cannot create a category by proposing an unknown name."""
@@ -114,6 +164,7 @@ class CreateTaskToolTests(unittest.TestCase):
                     user_id=owner_user_id,
                     title="Send expense report",
                     category_name="Finance",
+                    parse_confidence=0.5,
                 )
 
             self.assertEqual(raised.exception.code, "invalid_category")
@@ -135,6 +186,7 @@ class CreateTaskToolTests(unittest.TestCase):
                     user_id=owner_user_id,
                     title="Prepare quarterly plan",
                     category_name="Work",
+                    parse_confidence=0.5,
                 )
 
             self.assertEqual(raised.exception.code, "invalid_category")
@@ -147,11 +199,13 @@ class CreateTaskToolTests(unittest.TestCase):
                 conn,
                 user_id=owner_user_id,
                 title="Owner task",
+                parse_confidence=0.5,
             )
             other_task = create_task_tool(
                 conn,
                 user_id=other_user_id,
                 title="Other task",
+                parse_confidence=0.5,
             )
 
             self.assertEqual(
@@ -182,6 +236,7 @@ class CreateTaskToolTests(unittest.TestCase):
                             conn,
                             user_id=owner_user_id,
                             title="Buy printer paper",
+                            parse_confidence=0.5,
                             **{field_name: value},
                         )
 

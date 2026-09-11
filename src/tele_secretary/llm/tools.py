@@ -12,7 +12,6 @@ from tele_secretary.app.tasks import (
     list_categories_and_tags,
 )
 
-# Edit this function to allow the LLM to enter in a parsing confidence
 def create_task_tool(
     conn: Connection,
     *,
@@ -24,6 +23,7 @@ def create_task_tool(
     estimated_minutes: int | None = None,
     urgency: str | None = None,
     category_name: str | None = None,
+    parse_confidence: float | None = None,
 ) -> TaskRecord:
     """Create a task using only the fields the LLM may propose."""
     _validate_model_required_text_field(title, "title")
@@ -32,11 +32,12 @@ def create_task_tool(
     _validate_model_optional_text_field(urgency, "urgency")
     _validate_model_estimated_minutes(estimated_minutes)
     deadline = _parse_deadline_at(deadline_at)
+    confidence = _validate_model_parse_confidence(parse_confidence)
     category = _resolve_owner_category_id(
-            conn,
-            user_id=user_id,
-            category_name=category_name,
-        )
+        conn,
+        user_id=user_id,
+        category_name=category_name,
+    )
 
     return create_task(
         conn,
@@ -44,11 +45,13 @@ def create_task_tool(
         title=title,
         source="telegram_nl",
         description=description,
-        deadline_at=deadline, 
+        deadline_at=deadline,
         deadline_type=deadline_type,
         estimated_minutes=estimated_minutes,
         urgency=urgency,
         category_id=category,
+        parse_status="parsed",
+        parse_confidence=confidence,
     )
 
 
@@ -100,6 +103,20 @@ def _validate_model_estimated_minutes(estimated_minutes: int | None) -> None:
             "invalid_estimated_minutes",
             "estimated_minutes must be a positive integer.",
         )
+
+
+def _validate_model_parse_confidence(parse_confidence: float | None) -> float | None:
+    """Reject non-numeric confidence values before service-level validation."""
+    if parse_confidence is None:
+        return None
+    if isinstance(parse_confidence, bool) or not isinstance(
+        parse_confidence, (int, float)
+    ):
+        raise TaskValidationError(
+            "invalid_parse_confidence",
+            "parse_confidence must be a number between 0.0 and 1.0.",
+        )
+    return float(parse_confidence)
 
 
 def _resolve_owner_category_id(
