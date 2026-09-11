@@ -16,6 +16,10 @@ from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.llm.tools import create_task_tool
 from tele_secretary.persistence.migrations import apply_migrations
 
+# TODO
+# For the currently existing tests, have the confidence scoring be a valid value
+# have 1 test to cycle through all the possible correct values of confidence and that they all work
+# have 1 test to try invalid confidence values
 class CreateTaskToolTests(unittest.TestCase):
     """Verify that LLM task proposals remain safely owner-scoped."""
 
