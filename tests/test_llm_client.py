@@ -10,6 +10,10 @@ import _path  # noqa: F401
 from tele_secretary.llm.client import LLMClientError, OpenAIResponsesClient
 
 
+# TODO(TSEC-42): Add focused AppConfig and packaged system-prompt loader tests
+# when those runtime configuration and prompt-loading pieces are implemented.
+
+
 @dataclass
 class FakeOutputItem:
     """One minimal OpenAI output item used by the fake SDK response."""

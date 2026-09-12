@@ -15,6 +15,8 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True)
 class AppConfig:
+    # TODO(TSEC-42): Add validated OpenAI API-key and model settings here, loaded
+    # from OPENAI_API_KEY and OPENAI_MODEL without ever logging the key.
     telegram_bot_token: str | None
     telegram_allowed_user_ids: tuple[int, ...]
     data_dir: Path
