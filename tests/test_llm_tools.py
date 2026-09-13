@@ -1,13 +1,9 @@
 """Tests for bounded LLM tool adapters."""
 
-# TODO(TSEC-43): Add focused tests for the provider-neutral schemas and
-# allowlisted dispatcher: valid calls, malformed JSON or arguments, unknown
-# tools, trusted-owner injection, structured service failures, and rejection
-# of every non-allowlisted operation.
-
 from __future__ import annotations
 
 from contextlib import contextmanager
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,7 +14,12 @@ import _path  # noqa: F401
 from db_helpers import open_test_database
 from tele_secretary.app.tasks import TaskValidationError, list_active_tasks
 from tele_secretary.app.users import get_or_create_telegram_user_id
-from tele_secretary.llm.tools import create_task_tool
+from tele_secretary.llm.tools import (
+    CREATE_TASK_TOOL_NAME,
+    create_task_tool,
+    dispatch_tool_call,
+    get_tool_definitions,
+)
 from tele_secretary.persistence.migrations import apply_migrations
 
 class CreateTaskToolTests(unittest.TestCase):
@@ -244,6 +245,88 @@ class CreateTaskToolTests(unittest.TestCase):
                             parse_confidence=0.5,
                             **{field_name: value},
                         )
+
+    def test_definition_matches_create_task_tool_model_arguments(self) -> None:
+        """The provider schema exposes every and only model-controlled fields."""
+        (definition,) = get_tool_definitions()
+        parameters = definition["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+        tool_parameters = inspect.signature(create_task_tool).parameters
+
+        self.assertEqual(definition["type"], "function")
+        self.assertEqual(definition["name"], CREATE_TASK_TOOL_NAME)
+        self.assertTrue(definition["strict"])
+        self.assertEqual(parameters["additionalProperties"], False)
+        self.assertEqual(set(parameters["required"]), set(properties))
+        self.assertEqual(
+            set(properties),
+            set(tool_parameters) - {"conn", "user_id"},
+        )
+
+    def test_dispatches_only_the_create_task_tool_for_the_trusted_owner(self) -> None:
+        """Dispatch injects the owner instead of accepting it from model JSON."""
+        with self.open_seeded_database() as (conn, owner_user_id, other_user_id):
+            result = dispatch_tool_call(
+                conn,
+                user_id=owner_user_id,
+                call_id="call_create_task",
+                name=CREATE_TASK_TOOL_NAME,
+                arguments_json='{"title":"Owner-only task"}',
+            )
+
+            self.assertEqual(result.call_id, "call_create_task")
+            self.assertEqual(result.output["ok"], True)
+            self.assertEqual(result.output["task"], {"ref": "T1", "title": "Owner-only task"})
+            self.assertEqual(len(list_active_tasks(conn, user_id=owner_user_id)), 1)
+            self.assertEqual(list_active_tasks(conn, user_id=other_user_id), ())
+
+    def test_dispatch_rejects_unknown_and_model_controlled_arguments(self) -> None:
+        """Only the explicit allowlist may reach an application service."""
+        with self.open_seeded_database() as (conn, owner_user_id, other_user_id):
+            for name, arguments_json, expected_code in (
+                ("delete_everything", '{"title":"Ignore this"}', "unknown_tool"),
+                (
+                    CREATE_TASK_TOOL_NAME,
+                    f'{{"title":"Ignore this","user_id":"{other_user_id}"}}',
+                    "unexpected_argument",
+                ),
+            ):
+                with self.subTest(name=name, expected_code=expected_code):
+                    result = dispatch_tool_call(
+                        conn,
+                        user_id=owner_user_id,
+                        call_id="call_rejected",
+                        name=name,
+                        arguments_json=arguments_json,
+                    )
+
+                    self.assertEqual(result.output["ok"], False)
+                    self.assertEqual(result.output["error"]["code"], expected_code)
+                    self.assertEqual(list_active_tasks(conn, user_id=owner_user_id), ())
+                    self.assertEqual(list_active_tasks(conn, user_id=other_user_id), ())
+
+    def test_dispatch_returns_safe_errors_for_malformed_and_invalid_arguments(self) -> None:
+        """Model errors do not raise or reveal internal application exceptions."""
+        with self.open_seeded_database() as (conn, owner_user_id, _):
+            for arguments_json, expected_code in (
+                ("not JSON", "malformed_arguments"),
+                ('{"title":"   "}', "invalid_title"),
+            ):
+                with self.subTest(arguments_json=arguments_json):
+                    result = dispatch_tool_call(
+                        conn,
+                        user_id=owner_user_id,
+                        call_id="call_invalid",
+                        name=CREATE_TASK_TOOL_NAME,
+                        arguments_json=arguments_json,
+                    )
+
+                    self.assertEqual(result.call_id, "call_invalid")
+                    self.assertEqual(result.output["ok"], False)
+                    self.assertEqual(result.output["error"]["code"], expected_code)
+                    self.assertEqual(list_active_tasks(conn, user_id=owner_user_id), ())
 
     @contextmanager
     def open_seeded_database(self) -> Iterator[tuple[Connection, str, str]]:

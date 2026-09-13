@@ -1,15 +1,12 @@
 """Bounded LLM tool adapters that call public application services."""
 
-# TODO(TSEC-43): Define provider-neutral JSON schemas for exposed tools and
-# one explicit allowlist dispatcher. Parse and validate model JSON before
-# calling a public application service; never use dynamic imports, eval, SQL,
-# shell commands, or a model-provided owner ID. The dispatcher must return a
-# structured success or safe error result correlated to the provider call ID.
-
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+import json
 from sqlite3 import Connection
+from typing import Any, Mapping
 
 from tele_secretary.app.tasks import (
     TaskRecord,
@@ -17,6 +14,170 @@ from tele_secretary.app.tasks import (
     create_task,
     list_categories_and_tags,
 )
+
+
+CREATE_TASK_TOOL_NAME = "create_task_tool"
+
+
+@dataclass(frozen=True)
+class ToolDispatchResult:
+    """One safe, structured result for an LLM-proposed tool call."""
+
+    call_id: str
+    output: Mapping[str, object]
+
+
+def get_tool_definitions() -> tuple[Mapping[str, object], ...]:
+    """Return the currently allowlisted function definitions for the LLM client."""
+    return (
+        {
+            "type": "function",
+            "name": CREATE_TASK_TOOL_NAME,
+            "description": "Create one task for the authenticated Telegram user.",
+            "strict": True,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short task title.",
+                    },
+                    "description": {
+                        "type": ["string", "null"],
+                        "description": "Optional task details.",
+                    },
+                    "deadline_at": {
+                        "type": ["string", "null"],
+                        "description": "Optional ISO-8601 timestamp with a timezone offset.",
+                    },
+                    "deadline_type": {
+                        "type": ["string", "null"],
+                        "enum": ["hard", "soft", None],
+                        "description": "Whether the deadline is hard or soft.",
+                    },
+                    "estimated_minutes": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "description": "Optional positive estimate in minutes.",
+                    },
+                    "urgency": {
+                        "type": ["string", "null"],
+                        "enum": ["low", "medium", "high", "top_priority", None],
+                        "description": "Optional task urgency.",
+                    },
+                    "category_name": {
+                        "type": ["string", "null"],
+                        "description": "Optional exact category name supplied in the user context.",
+                    },
+                    "parse_confidence": {
+                        "type": ["number", "null"],
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "description": "Optional confidence in the parsed task details.",
+                    },
+                },
+                "required": [
+                    "title",
+                    "description",
+                    "deadline_at",
+                    "deadline_type",
+                    "estimated_minutes",
+                    "urgency",
+                    "category_name",
+                    "parse_confidence",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    )
+
+
+def dispatch_tool_call(
+    conn: Connection,
+    *,
+    user_id: str,
+    call_id: str,
+    name: str,
+    arguments_json: str,
+) -> ToolDispatchResult:
+    """Dispatch one allowlisted call with the trusted owner injected by the app."""
+    if name != CREATE_TASK_TOOL_NAME:
+        return _tool_error(call_id, "unknown_tool", "The requested tool is not available.")
+
+    arguments_or_error = _parse_create_task_tool_arguments(arguments_json)
+    if isinstance(arguments_or_error, ToolDispatchResult):
+        return ToolDispatchResult(call_id=call_id, output=arguments_or_error.output)
+
+    try:
+        task = create_task_tool(conn, user_id=user_id, **arguments_or_error)
+    except TaskValidationError as error:
+        return _tool_error(call_id, error.code, "The task fields are invalid.")
+    except Exception:
+        return _tool_error(call_id, "tool_execution_failed", "The task could not be created.")
+
+    return ToolDispatchResult(
+        call_id=call_id,
+        output={
+            "ok": True,
+            "task": {
+                "ref": task.ref,
+                "title": task.title,
+            },
+        },
+    )
+
+
+def _parse_create_task_tool_arguments(
+    arguments_json: str,
+) -> dict[str, Any] | ToolDispatchResult:
+    """Load only arguments accepted by ``create_task_tool`` from model JSON."""
+    if not isinstance(arguments_json, str):
+        return _tool_error("", "malformed_arguments", "Tool arguments must be JSON text.")
+
+    try:
+        arguments = json.loads(arguments_json)
+    except json.JSONDecodeError:
+        return _tool_error("", "malformed_arguments", "Tool arguments must be valid JSON.")
+
+    if not isinstance(arguments, dict):
+        return _tool_error("", "malformed_arguments", "Tool arguments must be a JSON object.")
+
+    allowed_argument_names = {
+        "title",
+        "description",
+        "deadline_at",
+        "deadline_type",
+        "estimated_minutes",
+        "urgency",
+        "category_name",
+        "parse_confidence",
+    }
+    unexpected_argument_names = set(arguments) - allowed_argument_names
+    if unexpected_argument_names:
+        return _tool_error(
+            "",
+            "unexpected_argument",
+            "Tool arguments include an unsupported field.",
+        )
+    if "title" not in arguments:
+        return _tool_error("", "missing_title", "A task title is required.")
+
+    return arguments
+
+
+def _tool_error(call_id: str, code: str, message: str) -> ToolDispatchResult:
+    """Build a provider-neutral error result without exposing exception details."""
+    return ToolDispatchResult(
+        call_id=call_id,
+        output={
+            "ok": False,
+            "error": {
+                "code": code,
+                "message": message,
+            },
+        },
+    )
+
 
 def create_task_tool(
     conn: Connection,
