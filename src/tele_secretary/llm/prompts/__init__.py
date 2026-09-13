@@ -1,2 +1,6 @@
-# TODO(TSEC-42): Add the versioned system-prompt loading API here and test that
-# it can read the packaged Markdown prompt after installation.
+from pathlib import Path
+
+def load_system_prompt() -> str:
+    """Return the packaged system prompt for the LLM agent."""
+    prompt_text = Path(__file__).with_name("system.md").read_text(encoding="utf-8")
+    return prompt_text

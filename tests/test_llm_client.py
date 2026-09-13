@@ -10,8 +10,8 @@ import _path  # noqa: F401
 from tele_secretary.llm.client import LLMClientError, OpenAIResponsesClient
 
 
-# TODO(TSEC-42): Add focused AppConfig and packaged system-prompt loader tests
-# when those runtime configuration and prompt-loading pieces are implemented.
+# TODO(TSEC-42): Add a build/install test proving system.md is present in the
+# distributed package, not only in a source checkout.
 
 
 @dataclass
