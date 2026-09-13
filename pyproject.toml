@@ -9,9 +9,8 @@ description = "Telegram-first personal task and reminder assistant."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "openai>=1,<2",
     "python-telegram-bot>=21,<23",
-    # TODO(TSEC-42): Add the official `openai` SDK as a direct runtime dependency
-    # before OpenAIResponsesClient is constructed by the application.
 ]
 
 [project.optional-dependencies]
@@ -23,6 +22,4 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-# TODO(TSEC-42): Package `llm/prompts/*.md` so the versioned system prompt is
-# available after installation, not only from a source checkout.
-tele_secretary = ["migrations/*.sql"]
+tele_secretary = ["llm/prompts/*.md", "migrations/*.sql"]
