@@ -9,11 +9,6 @@ import unittest
 import _path  # noqa: F401
 from tele_secretary.llm.client import LLMClientError, OpenAIResponsesClient
 
-
-# TODO(TSEC-42): Add a build/install test proving system.md is present in the
-# distributed package, not only in a source checkout.
-
-
 @dataclass
 class FakeOutputItem:
     """One minimal OpenAI output item used by the fake SDK response."""
