@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -22,6 +22,8 @@ class AppConfig:
     db_path: Path
     user_timezone: str
     log_level: str
+    openai_api_key: str | None = field(default=None, repr=False)
+    openai_model: str | None = None
 
     def __post_init__(self) -> None:
         """Normalize duplicate allowlist entries to one authorized identity."""
@@ -54,6 +56,13 @@ class AppConfig:
         if require_bot_token and not bot_token:
             raise ConfigError("TELEGRAM_BOT_TOKEN is required for the bot command.")
 
+        openai_api_key = values.get("OPENAI_API_KEY", "").strip() or None
+        openai_model = values.get("OPENAI_MODEL", "").strip() or None
+        if (openai_api_key is None) != (openai_model is None):
+            raise ConfigError(
+                "OPENAI_API_KEY and OPENAI_MODEL must both be set or both be empty."
+            )
+
         return cls(
             telegram_bot_token=bot_token,
             telegram_allowed_user_ids=_parse_allowed_user_ids(
@@ -64,6 +73,8 @@ class AppConfig:
             db_path=db_path,
             user_timezone=timezone,
             log_level=values.get("SECRETARY_LOG_LEVEL", "INFO").strip().upper(),
+            openai_api_key=openai_api_key,
+            openai_model=openai_model,
         )
 
 

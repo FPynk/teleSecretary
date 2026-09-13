@@ -9,16 +9,19 @@ description = "Telegram-first personal task and reminder assistant."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "openai>=1,<2",
     "python-telegram-bot>=21,<23",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8,<9",
+    "setuptools>=69",
+    "wheel>=0.45,<1",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-tele_secretary = ["migrations/*.sql"]
+tele_secretary = ["llm/prompts/*.md", "migrations/*.sql"]
