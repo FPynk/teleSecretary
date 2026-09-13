@@ -1,5 +1,11 @@
 """Bounded LLM tool adapters that call public application services."""
 
+# TODO(TSEC-43): Define provider-neutral JSON schemas for exposed tools and
+# one explicit allowlist dispatcher. Parse and validate model JSON before
+# calling a public application service; never use dynamic imports, eval, SQL,
+# shell commands, or a model-provided owner ID. The dispatcher must return a
+# structured success or safe error result correlated to the provider call ID.
+
 from __future__ import annotations
 
 from datetime import datetime

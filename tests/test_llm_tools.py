@@ -1,5 +1,10 @@
 """Tests for bounded LLM tool adapters."""
 
+# TODO(TSEC-43): Add focused tests for the provider-neutral schemas and
+# allowlisted dispatcher: valid calls, malformed JSON or arguments, unknown
+# tools, trusted-owner injection, structured service failures, and rejection
+# of every non-allowlisted operation.
+
 from __future__ import annotations
 
 from contextlib import contextmanager
