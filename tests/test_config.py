@@ -22,6 +22,31 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.telegram_allowed_user_ids, (123, 456))
         self.assertEqual(config.db_path, Path("tmp-data") / "secretary.sqlite3")
         self.assertEqual(config.log_level, "INFO")
+        self.assertIsNone(config.openai_api_key)
+        self.assertIsNone(config.openai_model)
+
+    def test_config_loads_paired_openai_settings_without_exposing_key_in_repr(self) -> None:
+        """Trim paired LLM settings while keeping the secret out of dataclass repr output."""
+        config = AppConfig.from_env(
+            {
+                "OPENAI_API_KEY": " test-api-key ",
+                "OPENAI_MODEL": " gpt-5.6-luna ",
+            }
+        )
+
+        self.assertEqual(config.openai_api_key, "test-api-key")
+        self.assertEqual(config.openai_model, "gpt-5.6-luna")
+        self.assertNotIn("test-api-key", repr(config))
+
+    def test_config_rejects_partial_openai_settings(self) -> None:
+        """Avoid deferred provider failures from a key or model configured alone."""
+        for environment in (
+            {"OPENAI_API_KEY": "test-api-key"},
+            {"OPENAI_MODEL": "gpt-5.6-luna"},
+        ):
+            with self.subTest(environment=environment):
+                with self.assertRaises(ConfigError):
+                    AppConfig.from_env(environment)
 
     def test_bot_token_can_be_required(self) -> None:
         with self.assertRaises(ConfigError):
