@@ -50,6 +50,7 @@ def run_agent(
     tool_call_rounds = 0
     total_tool_calls = 0
     total_tool_result_bytes = 0
+    saved_task_refs: list[str] = []
 
     while True:
         try:
@@ -60,6 +61,12 @@ def run_agent(
             )
         except LLMClientError:
             LOGGER.warning("LLM provider request failed.")
+            if saved_task_refs:
+                return (
+                    f"Saved tasks: {', '.join(saved_task_refs)}. "
+                    "I couldn't finish the response, but these tasks are saved. "
+                    "Please don't repeat their creation."
+                )
             return LLM_REQUEST_FAILED_TEXT
 
         if not response.tool_calls:
@@ -81,6 +88,11 @@ def run_agent(
                 name=tool_call.name,
                 arguments_json=tool_call.arguments_json,
             )
+            saved_task = tool_result.output.get("task")
+            if tool_result.output.get("ok") is True and isinstance(saved_task, Mapping):
+                saved_ref = saved_task.get("ref")
+                if isinstance(saved_ref, str) and saved_ref:
+                    saved_task_refs.append(saved_ref)
             output = json.dumps(tool_result.output, ensure_ascii=False, separators=(",", ":"))
             total_tool_result_bytes += len(output.encode("utf-8"))
             if total_tool_result_bytes > MAXIMUM_TOOL_RESULT_BYTES:

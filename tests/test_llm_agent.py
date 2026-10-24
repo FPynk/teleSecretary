@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime, timezone
-from sqlite3 import Connection
+import json
+from sqlite3 import Connection, Row, connect
 from typing import Any, Mapping, Sequence
 import unittest
 from unittest.mock import ANY, Mock, patch
 
 import _path  # noqa: F401
-from tele_secretary.app.tasks import CategoryRecord, VocabularyRecord
+from tele_secretary.app.tasks import CategoryRecord, VocabularyRecord, list_active_tasks
+from tele_secretary.app.users import get_or_create_telegram_user_id
 from tele_secretary.llm.agent import (
     LLM_REQUEST_FAILED_TEXT,
     MAXIMUM_TOOL_CALLS,
@@ -23,6 +26,7 @@ from tele_secretary.llm.agent import (
 from tele_secretary.llm.client import LLMClientError, LLMResponse, LLMToolCall
 from tele_secretary.llm.prompts import load_system_prompt
 from tele_secretary.llm.tools import ToolDispatchResult, get_tool_definitions
+from tele_secretary.persistence.migrations import apply_migrations
 
 
 class FakeLLMClient:
@@ -305,6 +309,51 @@ class AgentEntryPointTests(unittest.TestCase):
             logged.output,
             ["WARNING:tele_secretary.llm.agent:LLM provider request failed."],
         )
+
+    def test_confirms_persisted_tasks_when_follow_up_provider_request_fails(self) -> None:
+        """A failed follow-up must not invite users to repeat committed writes."""
+        for titles in (("Buy milk",), ("Buy milk", "Buy bread")):
+            with self.subTest(titles=titles), closing(connect(":memory:")) as conn:
+                conn.row_factory = Row
+                conn.execute("PRAGMA foreign_keys = ON")
+                apply_migrations(conn)
+                user_id = get_or_create_telegram_user_id(
+                    conn, telegram_user_id=1001, timezone="America/Chicago"
+                )
+                client = FakeLLMClient(
+                    LLMResponse(
+                        response_id="resp_1",
+                        text="",
+                        tool_calls=tuple(
+                            LLMToolCall(
+                                call_id=f"call_{index}",
+                                name="create_task_tool",
+                                arguments_json=json.dumps({"title": title}),
+                            )
+                            for index, title in enumerate(titles)
+                        ),
+                    ),
+                    LLMClientError("private provider failure"),
+                )
+
+                with self.assertLogs("tele_secretary.llm.agent", level="WARNING"):
+                    result = run_agent(
+                        conn,
+                        client=client,
+                        user_id=user_id,
+                        user_message="Create my shopping tasks",
+                        current_time=datetime(2026, 9, 13, tzinfo=timezone.utc),
+                        user_timezone="America/Chicago",
+                    )
+
+                tasks = list_active_tasks(conn, user_id=user_id)
+                self.assertEqual(sorted(task.title for task in tasks), sorted(titles))
+                self.assertFalse(conn.in_transaction)
+                self.assertIn("Saved tasks:", result)
+                for task in tasks:
+                    self.assertIn(task.ref, result)
+                self.assertNotIn("Please try again", result)
+                self.assertNotIn("private provider failure", result)
 
     def test_stops_before_executing_tool_calls_after_the_round_limit(self) -> None:
         """Repeated model tool proposals cannot create an unbounded loop."""
