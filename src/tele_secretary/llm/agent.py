@@ -6,15 +6,21 @@ from datetime import datetime
 import json
 import logging
 from sqlite3 import Connection
+from typing import Any, Mapping
 
 from tele_secretary.app.tasks import list_categories_and_tags
-from tele_secretary.llm.client import LLMClient
+from tele_secretary.llm.client import LLMClient, LLMClientError, LLMResponse
 from tele_secretary.llm.prompts import load_system_prompt
-from tele_secretary.llm.tools import get_tool_definitions
+from tele_secretary.llm.tools import dispatch_tool_call, get_tool_definitions
 
 
-MAXIMUM_CATEGORY_CONTEXT_NAMES = 50
-TOOL_CALLS_NOT_YET_SUPPORTED_TEXT = "I can't complete saved task changes yet."
+MAXIMUM_TOOL_CALL_ROUNDS = 3
+MAXIMUM_TOOL_CALLS = 5
+MAXIMUM_TOOL_RESULT_BYTES = 12_000
+LLM_REQUEST_FAILED_TEXT = "I'm having trouble responding right now. Please try again."
+TOOL_CALL_LIMIT_TEXT = "I couldn't complete that request because it requested too many actions."
+TOOL_CALL_ROUND_LIMIT_TEXT = "I couldn't complete that request within the allowed number of steps."
+TOOL_RESULT_LIMIT_TEXT = "I couldn't complete that request because it returned too much data."
 LOGGER = logging.getLogger(__name__)
 
 
@@ -29,38 +35,74 @@ def run_agent(
 ) -> str:
     """Return one stateless model reply for the trusted owner's message."""
     category_names = _load_category_names_for_model(conn, user_id=user_id)
-    response = client.create_response(
-        instructions=load_system_prompt(),
-        input_items=_build_initial_input(
-            user_message=user_message,
-            current_time=current_time,
-            user_timezone=user_timezone,
-            category_names=category_names,
-        ),
-        tool_definitions=get_tool_definitions(),
+    initial_input = _build_initial_input(
+        user_message=user_message,
+        current_time=current_time,
+        user_timezone=user_timezone,
+        category_names=category_names,
     )
-    if response.tool_calls:
-        LOGGER.info("LLM tool calls deferred count=%s", len(response.tool_calls))
-        return TOOL_CALLS_NOT_YET_SUPPORTED_TEXT
-    return response.text
+    tool_definitions = get_tool_definitions()
+    system_prompt = load_system_prompt()
+    input_items: str | list[Mapping[str, Any]] = initial_input
+    conversation_items: list[Mapping[str, Any]] = [
+        {"role": "user", "content": initial_input},
+    ]
+    tool_call_rounds = 0
+    total_tool_calls = 0
+    total_tool_result_bytes = 0
+
+    while True:
+        try:
+            response = client.create_response(
+                instructions=system_prompt,
+                input_items=input_items,
+                tool_definitions=tool_definitions,
+            )
+        except LLMClientError:
+            LOGGER.warning("LLM provider request failed.")
+            return LLM_REQUEST_FAILED_TEXT
+
+        if not response.tool_calls:
+            return response.text
+        if tool_call_rounds >= MAXIMUM_TOOL_CALL_ROUNDS:
+            return TOOL_CALL_ROUND_LIMIT_TEXT
+        if total_tool_calls + len(response.tool_calls) > MAXIMUM_TOOL_CALLS:
+            return TOOL_CALL_LIMIT_TEXT
+
+        LOGGER.info("LLM tool calls requested count=%s", len(response.tool_calls))
+        tool_call_rounds += 1
+        total_tool_calls += len(response.tool_calls)
+        conversation_items.extend(_continuation_items(response))
+        for tool_call in response.tool_calls:
+            tool_result = dispatch_tool_call(
+                conn,
+                user_id=user_id,
+                call_id=tool_call.call_id,
+                name=tool_call.name,
+                arguments_json=tool_call.arguments_json,
+            )
+            output = json.dumps(tool_result.output, ensure_ascii=False, separators=(",", ":"))
+            total_tool_result_bytes += len(output.encode("utf-8"))
+            if total_tool_result_bytes > MAXIMUM_TOOL_RESULT_BYTES:
+                return TOOL_RESULT_LIMIT_TEXT
+            conversation_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": tool_call.call_id,
+                    "output": output,
+                }
+            )
+        input_items = conversation_items
 
 
 def _load_category_names_for_model(conn: Connection, *, user_id: str) -> tuple[str, ...]:
-    """Return an owner-scoped category list only when it fits the context bound."""
-    category_names = tuple(
+    """Return the active category names belonging to the trusted owner."""
+    return tuple(
         sorted(
             (category.name for category in list_categories_and_tags(conn, user_id=user_id).categories),
             key=str.casefold,
         )
     )
-    if len(category_names) > MAXIMUM_CATEGORY_CONTEXT_NAMES:
-        LOGGER.warning(
-            "LLM category context omitted category_count=%s category_limit=%s",
-            len(category_names),
-            MAXIMUM_CATEGORY_CONTEXT_NAMES,
-        )
-        return ()
-    return category_names
 
 
 def _build_initial_input(
@@ -90,9 +132,16 @@ def _build_initial_input(
     )
 
 
-# TODO(TSEC-43): Implement the bounded tool-calling loop here. Send only the
-# allowlisted definitions from llm.tools, dispatch each proposed call through
-# llm.tools with the trusted user ID and database connection injected outside
-# model arguments, append correlated structured tool results, and stop after a
-# small fixed number of rounds. Return typed, safe outcomes for provider,
-# malformed-call, unknown-tool, tool-failure, and round-limit cases.
+def _continuation_items(response: LLMResponse) -> tuple[Mapping[str, Any], ...]:
+    """Return prior model output in the format required by the next request."""
+    if response.continuation_items:
+        return response.continuation_items
+    return tuple(
+        {
+            "type": "function_call",
+            "call_id": tool_call.call_id,
+            "name": tool_call.name,
+            "arguments": tool_call.arguments_json,
+        }
+        for tool_call in response.tool_calls
+    )

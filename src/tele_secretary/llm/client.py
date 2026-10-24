@@ -5,6 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
+# Notes to future self in temp.txt
+# review the tests that it created and then slim it down
+
+# analyse the agent.py code
+
+# client.py
+# - _to_continuation_item ask what kinds of example inputs go in
+# - need example convo and workflow to understand how this thing works
+# - what diff between function call and the sdk serializable thing, why not just have some generic turn into text function and feed it back into the LLM, LLM can probably tell function
+# - is this acting like Lang graph / lang smith basically keeping track of the conversation?
 
 class LLMClientError(RuntimeError):
     """Raised when the configured LLM provider cannot produce a usable response."""
@@ -21,11 +31,12 @@ class LLMToolCall:
 
 @dataclass(frozen=True)
 class LLMResponse:
-    """Provider-neutral result returned to the LLM agent."""
+    """Normalized provider result returned to the LLM agent."""
 
     response_id: str
     text: str
     tool_calls: tuple[LLMToolCall, ...]
+    continuation_items: tuple[Mapping[str, Any], ...] = ()
 
 
 class LLMClient(Protocol):
@@ -107,7 +118,11 @@ def _to_llm_response(response: Any) -> LLMResponse:
         raise LLMClientError("OpenAI returned malformed response text.")
 
     tool_calls: list[LLMToolCall] = []
+    continuation_items: list[Mapping[str, Any]] = []
     for output_item in getattr(response, "output", ()):
+        continuation_item = _to_continuation_item(output_item)
+        if continuation_item is not None:
+            continuation_items.append(continuation_item)
         if getattr(output_item, "type", None) != "function_call":
             continue
         call_id = getattr(output_item, "call_id", None)
@@ -127,4 +142,27 @@ def _to_llm_response(response: Any) -> LLMResponse:
         response_id=response_id,
         text=output_text,
         tool_calls=tuple(tool_calls),
+        continuation_items=tuple(continuation_items),
     )
+
+
+def _to_continuation_item(output_item: Any) -> Mapping[str, Any] | None:
+    """Convert one provider output item into safe input for the next loop turn."""
+    model_dump = getattr(output_item, "model_dump", None)
+    if callable(model_dump):
+        dumped_item = model_dump(mode="json")
+        if isinstance(dumped_item, Mapping):
+            return dumped_item
+
+    if getattr(output_item, "type", None) == "function_call":
+        call_id = getattr(output_item, "call_id", None)
+        name = getattr(output_item, "name", None)
+        arguments = getattr(output_item, "arguments", None)
+        if all(isinstance(value, str) and value for value in (call_id, name, arguments)):
+            return {
+                "type": "function_call",
+                "call_id": call_id,
+                "name": name,
+                "arguments": arguments,
+            }
+    return None

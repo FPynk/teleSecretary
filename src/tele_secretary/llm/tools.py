@@ -29,6 +29,45 @@ class ToolDispatchResult:
 
 def get_tool_definitions() -> tuple[Mapping[str, object], ...]:
     """Return the currently allowlisted function definitions for the LLM client."""
+    properties: dict[str, object] = {
+        "title": {
+            "type": "string",
+            "description": "Short task title.",
+        },
+        "description": {
+            "type": ["string", "null"],
+            "description": "Optional task details.",
+        },
+        "deadline_at": {
+            "type": ["string", "null"],
+            "description": "Optional ISO-8601 timestamp with a timezone offset.",
+        },
+        "deadline_type": {
+            "type": ["string", "null"],
+            "enum": ["hard", "soft", None],
+            "description": "Whether the deadline is hard or soft.",
+        },
+        "estimated_minutes": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "description": "Optional positive estimate in minutes.",
+        },
+        "urgency": {
+            "type": ["string", "null"],
+            "enum": ["low", "medium", "high", "top_priority", None],
+            "description": "Optional task urgency.",
+        },
+        "category_name": {
+            "type": ["string", "null"],
+            "description": "Optional exact category name supplied in the user context.",
+        },
+        "parse_confidence": {
+            "type": ["number", "null"],
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "description": "Optional confidence in the parsed task details.",
+        },
+    }
     return (
         {
             "type": "function",
@@ -37,55 +76,8 @@ def get_tool_definitions() -> tuple[Mapping[str, object], ...]:
             "strict": True,
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Short task title.",
-                    },
-                    "description": {
-                        "type": ["string", "null"],
-                        "description": "Optional task details.",
-                    },
-                    "deadline_at": {
-                        "type": ["string", "null"],
-                        "description": "Optional ISO-8601 timestamp with a timezone offset.",
-                    },
-                    "deadline_type": {
-                        "type": ["string", "null"],
-                        "enum": ["hard", "soft", None],
-                        "description": "Whether the deadline is hard or soft.",
-                    },
-                    "estimated_minutes": {
-                        "type": ["integer", "null"],
-                        "minimum": 1,
-                        "description": "Optional positive estimate in minutes.",
-                    },
-                    "urgency": {
-                        "type": ["string", "null"],
-                        "enum": ["low", "medium", "high", "top_priority", None],
-                        "description": "Optional task urgency.",
-                    },
-                    "category_name": {
-                        "type": ["string", "null"],
-                        "description": "Optional exact category name supplied in the user context.",
-                    },
-                    "parse_confidence": {
-                        "type": ["number", "null"],
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                        "description": "Optional confidence in the parsed task details.",
-                    },
-                },
-                "required": [
-                    "title",
-                    "description",
-                    "deadline_at",
-                    "deadline_type",
-                    "estimated_minutes",
-                    "urgency",
-                    "category_name",
-                    "parse_confidence",
-                ],
+                "properties": properties,
+                "required": list(properties),
                 "additionalProperties": False,
             },
         },

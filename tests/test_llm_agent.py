@@ -2,32 +2,35 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from sqlite3 import Connection
 from typing import Any, Mapping, Sequence
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import _path  # noqa: F401
 from tele_secretary.app.tasks import CategoryRecord, VocabularyRecord
 from tele_secretary.llm.agent import (
-    TOOL_CALLS_NOT_YET_SUPPORTED_TEXT,
+    LLM_REQUEST_FAILED_TEXT,
+    MAXIMUM_TOOL_CALLS,
+    MAXIMUM_TOOL_CALL_ROUNDS,
+    MAXIMUM_TOOL_RESULT_BYTES,
+    TOOL_CALL_LIMIT_TEXT,
+    TOOL_CALL_ROUND_LIMIT_TEXT,
+    TOOL_RESULT_LIMIT_TEXT,
     run_agent,
 )
-from tele_secretary.llm.client import LLMResponse, LLMToolCall
+from tele_secretary.llm.client import LLMClientError, LLMResponse, LLMToolCall
 from tele_secretary.llm.prompts import load_system_prompt
-from tele_secretary.llm.tools import get_tool_definitions
+from tele_secretary.llm.tools import ToolDispatchResult, get_tool_definitions
 
 
-@dataclass
 class FakeLLMClient:
-    """Record agent requests and return one predetermined model response."""
+    """Record agent requests and return a predetermined sequence of outcomes."""
 
-    response: LLMResponse
-
-    def __post_init__(self) -> None:
-        """Initialize the request history used by assertions."""
+    def __init__(self, *outcomes: LLMResponse | Exception) -> None:
+        """Store responses or failures to return in request order."""
+        self._outcomes = list(outcomes)
         self.requests: list[dict[str, Any]] = []
 
     def create_response(
@@ -45,7 +48,12 @@ class FakeLLMClient:
                 "tool_definitions": tool_definitions,
             }
         )
-        return self.response
+        if not self._outcomes:
+            raise AssertionError("FakeLLMClient received more requests than configured.")
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
 
 class AgentEntryPointTests(unittest.TestCase):
@@ -96,8 +104,8 @@ class AgentEntryPointTests(unittest.TestCase):
         )
         self.assertNotIn("trusted-owner-id", client.requests[0]["input_items"])
 
-    def test_omits_categories_when_the_owner_has_more_than_the_context_cap(self) -> None:
-        """Large category lists cannot consume an unbounded model context."""
+    def test_includes_all_categories_in_the_owner_context(self) -> None:
+        """Category selection remains available regardless of category count."""
         client = FakeLLMClient(LLMResponse(response_id="resp_1", text="Done.", tool_calls=()))
         category_service = Mock(
             return_value=VocabularyRecord(
@@ -109,7 +117,7 @@ class AgentEntryPointTests(unittest.TestCase):
         with patch(
             "tele_secretary.llm.agent.list_categories_and_tags",
             category_service,
-        ), self.assertLogs("tele_secretary.llm.agent", level="WARNING") as logged:
+        ):
             run_agent(
                 Mock(spec=Connection),
                 client=client,
@@ -120,18 +128,13 @@ class AgentEntryPointTests(unittest.TestCase):
             )
 
         input_items = client.requests[0]["input_items"]
-        self.assertIn("No category names are available for this request.", input_items)
-        self.assertNotIn("Category 0", input_items)
-        self.assertEqual(
-            logged.output,
-            [
-                "WARNING:tele_secretary.llm.agent:LLM category context omitted "
-                "category_count=51 category_limit=50"
-            ],
-        )
+        self.assertIn("Category 0", input_items)
+        self.assertIn("Category 50", input_items)
+        (definition,) = client.requests[0]["tool_definitions"]
+        self.assertIn("category_name", definition["parameters"]["properties"])
 
-    def test_does_not_repeat_model_text_that_claims_an_unexecuted_tool_write(self) -> None:
-        """Tool proposals stay unexecuted until the second TSEC-43 TODO is complete."""
+    def test_dispatches_a_tool_call_and_returns_the_follow_up_text(self) -> None:
+        """The agent correlates a safe tool result with the model's next request."""
         client = FakeLLMClient(
             LLMResponse(
                 response_id="resp_1",
@@ -143,12 +146,21 @@ class AgentEntryPointTests(unittest.TestCase):
                         arguments_json='{"title":"Buy milk"}',
                     ),
                 ),
-            )
+            ),
+            LLMResponse(response_id="resp_2", text="Added Buy milk.", tool_calls=()),
         )
+        tool_result = ToolDispatchResult(
+            call_id="call_1",
+            output={"ok": True, "task": {"ref": "T1", "title": "Buy milk"}},
+        )
+        dispatcher = Mock(return_value=tool_result)
 
         with patch(
             "tele_secretary.llm.agent.list_categories_and_tags",
-            return_value=VocabularyRecord(categories=(), tags=()),
+            return_value=VocabularyRecord(categories=(self.category(name="Home"),), tags=()),
+        ), patch(
+            "tele_secretary.llm.agent.dispatch_tool_call",
+            dispatcher,
         ), self.assertLogs("tele_secretary.llm.agent", level="INFO") as logged:
             result = run_agent(
                 Mock(spec=Connection),
@@ -159,15 +171,225 @@ class AgentEntryPointTests(unittest.TestCase):
                 user_timezone="America/Chicago",
             )
 
-        self.assertEqual(result, TOOL_CALLS_NOT_YET_SUPPORTED_TEXT)
+        self.assertEqual(result, "Added Buy milk.")
+        dispatcher.assert_called_once_with(
+            ANY,
+            user_id="trusted-owner-id",
+            call_id="call_1",
+            name="create_task_tool",
+            arguments_json='{"title":"Buy milk"}',
+        )
         self.assertEqual(
             logged.output,
-            ["INFO:tele_secretary.llm.agent:LLM tool calls deferred count=1"],
+            ["INFO:tele_secretary.llm.agent:LLM tool calls requested count=1"],
         )
+        self.assertEqual(
+            client.requests[1]["input_items"][-2:],
+            [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "create_task_tool",
+                    "arguments": '{"title":"Buy milk"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": '{"ok":true,"task":{"ref":"T1","title":"Buy milk"}}',
+                },
+            ],
+        )
+
+    def test_passes_structured_tool_errors_back_to_the_model(self) -> None:
+        """Malformed or unknown tool requests receive a safe model-visible result."""
+        client = FakeLLMClient(
+            LLMResponse(
+                response_id="resp_1",
+                text="",
+                tool_calls=(
+                    LLMToolCall(
+                        call_id="call_1",
+                        name="unknown_tool",
+                        arguments_json="not JSON",
+                    ),
+                ),
+            ),
+            LLMResponse(response_id="resp_2", text="I couldn't do that.", tool_calls=()),
+        )
+        dispatcher = Mock(
+            return_value=ToolDispatchResult(
+                call_id="call_1",
+                output={
+                    "ok": False,
+                    "error": {"code": "unknown_tool", "message": "The requested tool is not available."},
+                },
+            )
+        )
+
+        with patch(
+            "tele_secretary.llm.agent.list_categories_and_tags",
+            return_value=VocabularyRecord(categories=(), tags=()),
+        ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
+            result = run_agent(
+                Mock(spec=Connection),
+                client=client,
+                user_id="trusted-owner-id",
+                user_message="Do something unknown",
+                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
+                user_timezone="America/Chicago",
+            )
+
+        self.assertEqual(result, "I couldn't do that.")
+        self.assertEqual(
+            client.requests[1]["input_items"][-1],
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": (
+                    '{"ok":false,"error":{"code":"unknown_tool",'
+                    '"message":"The requested tool is not available."}}'
+                ),
+            },
+        )
+
+    def test_allows_multiple_tool_calls_across_multiple_rounds(self) -> None:
+        """The loop accumulates correlated calls and results until final text arrives."""
+        client = FakeLLMClient(
+            self.response_with_tool_calls("resp_1", "call_1"),
+            self.response_with_tool_calls("resp_2", "call_2", "call_3"),
+            LLMResponse(response_id="resp_3", text="Created all tasks.", tool_calls=()),
+        )
+        dispatcher = Mock(
+            side_effect=[
+                ToolDispatchResult(call_id=f"call_{index}", output={"ok": True})
+                for index in range(1, 4)
+            ]
+        )
+
+        with patch(
+            "tele_secretary.llm.agent.list_categories_and_tags",
+            return_value=VocabularyRecord(categories=(), tags=()),
+        ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
+            result = run_agent(
+                Mock(spec=Connection),
+                client=client,
+                user_id="trusted-owner-id",
+                user_message="Create three tasks",
+                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
+                user_timezone="America/Chicago",
+            )
+
+        self.assertEqual(result, "Created all tasks.")
+        self.assertEqual(dispatcher.call_count, 3)
+        self.assertEqual(len(client.requests), 3)
+
+    def test_returns_safe_text_when_the_provider_fails(self) -> None:
+        """Provider failures cannot expose implementation details to Telegram."""
+        client = FakeLLMClient(LLMClientError("provider details"))
+
+        with patch(
+            "tele_secretary.llm.agent.list_categories_and_tags",
+            return_value=VocabularyRecord(categories=(), tags=()),
+        ), self.assertLogs("tele_secretary.llm.agent", level="WARNING") as logged:
+            result = run_agent(
+                Mock(spec=Connection),
+                client=client,
+                user_id="trusted-owner-id",
+                user_message="Hello",
+                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
+                user_timezone="America/Chicago",
+            )
+
+        self.assertEqual(result, LLM_REQUEST_FAILED_TEXT)
+        self.assertEqual(
+            logged.output,
+            ["WARNING:tele_secretary.llm.agent:LLM provider request failed."],
+        )
+
+    def test_stops_before_executing_tool_calls_after_the_round_limit(self) -> None:
+        """Repeated model tool proposals cannot create an unbounded loop."""
+        client = FakeLLMClient(
+            *(
+                self.response_with_tool_calls(f"resp_{index}", f"call_{index}")
+                for index in range(MAXIMUM_TOOL_CALL_ROUNDS + 1)
+            )
+        )
+        dispatcher = Mock(return_value=ToolDispatchResult(call_id="call", output={"ok": True}))
+
+        with patch(
+            "tele_secretary.llm.agent.list_categories_and_tags",
+            return_value=VocabularyRecord(categories=(), tags=()),
+        ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
+            result = run_agent(
+                Mock(spec=Connection),
+                client=client,
+                user_id="trusted-owner-id",
+                user_message="Keep going",
+                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
+                user_timezone="America/Chicago",
+            )
+
+        self.assertEqual(result, TOOL_CALL_ROUND_LIMIT_TEXT)
+        self.assertEqual(dispatcher.call_count, MAXIMUM_TOOL_CALL_ROUNDS)
+        self.assertEqual(len(client.requests), MAXIMUM_TOOL_CALL_ROUNDS + 1)
+
+    def test_stops_before_executing_an_excessive_tool_batch(self) -> None:
+        """One response cannot bypass the total tool-call limit with a large batch."""
+        client = FakeLLMClient(
+            self.response_with_tool_calls(
+                "resp_1",
+                *(f"call_{index}" for index in range(MAXIMUM_TOOL_CALLS + 1)),
+            )
+        )
+        dispatcher = Mock()
+
+        with patch(
+            "tele_secretary.llm.agent.list_categories_and_tags",
+            return_value=VocabularyRecord(categories=(), tags=()),
+        ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
+            result = run_agent(
+                Mock(spec=Connection),
+                client=client,
+                user_id="trusted-owner-id",
+                user_message="Make many tasks",
+                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
+                user_timezone="America/Chicago",
+            )
+
+        self.assertEqual(result, TOOL_CALL_LIMIT_TEXT)
+        dispatcher.assert_not_called()
+
+    def test_stops_when_tool_result_output_exceeds_the_size_limit(self) -> None:
+        """Unexpectedly large results cannot grow the follow-up request without bound."""
+        client = FakeLLMClient(self.response_with_tool_calls("resp_1", "call_1"))
+        dispatcher = Mock(
+            return_value=ToolDispatchResult(
+                call_id="call_1",
+                output={"large_result": "x" * MAXIMUM_TOOL_RESULT_BYTES},
+            )
+        )
+
+        with patch(
+            "tele_secretary.llm.agent.list_categories_and_tags",
+            return_value=VocabularyRecord(categories=(), tags=()),
+        ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
+            result = run_agent(
+                Mock(spec=Connection),
+                client=client,
+                user_id="trusted-owner-id",
+                user_message="Make a large result",
+                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
+                user_timezone="America/Chicago",
+            )
+
+        self.assertEqual(result, TOOL_RESULT_LIMIT_TEXT)
 
     def test_uses_fresh_input_for_each_message(self) -> None:
         """One request cannot add a previous message to the next request's context."""
-        client = FakeLLMClient(LLMResponse(response_id="resp_1", text="Done.", tool_calls=()))
+        client = FakeLLMClient(
+            LLMResponse(response_id="resp_1", text="Done.", tool_calls=()),
+            LLMResponse(response_id="resp_2", text="Done.", tool_calls=()),
+        )
 
         with patch(
             "tele_secretary.llm.agent.list_categories_and_tags",
@@ -197,8 +419,17 @@ class AgentEntryPointTests(unittest.TestCase):
             archived_at=None,
         )
 
-
-# TODO(TSEC-43): Add fake-client tests for one or more tool-call rounds
-# followed by final text, tool failures, malformed and unknown calls, provider
-# failure, round-limit exhaustion, and fresh state for each message. These
-# tests must not make live provider calls or import Telegram.
+    def response_with_tool_calls(self, response_id: str, *call_ids: str) -> LLMResponse:
+        """Build one model response that proposes task-tool calls for test coverage."""
+        return LLMResponse(
+            response_id=response_id,
+            text="",
+            tool_calls=tuple(
+                LLMToolCall(
+                    call_id=call_id,
+                    name="create_task_tool",
+                    arguments_json='{"title":"Task"}',
+                )
+                for call_id in call_ids
+            ),
+        )

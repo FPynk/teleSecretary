@@ -89,6 +89,17 @@ class OpenAIResponsesClientTests(unittest.TestCase):
         self.assertEqual(response.tool_calls[0].name, "create_task_tool")
         self.assertEqual(response.tool_calls[0].arguments_json, '{"title":"Buy milk"}')
         self.assertEqual(
+            response.continuation_items,
+            (
+                {
+                    "type": "function_call",
+                    "call_id": "call_123",
+                    "name": "create_task_tool",
+                    "arguments": '{"title":"Buy milk"}',
+                },
+            ),
+        )
+        self.assertEqual(
             sdk_client.responses.requests,
             [
                 {
