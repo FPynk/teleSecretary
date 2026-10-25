@@ -81,13 +81,10 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.list_categories_and_tags",
             category_service,
         ):
-            result = run_agent(
-                conn,
-                client=client,
-                user_id="trusted-owner-id",
+            result = self.run_agent_for_test(
+                client,
                 user_message="Plan groceries",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
+                conn=conn,
             )
 
         self.assertEqual(result, "Done.")
@@ -122,13 +119,9 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.list_categories_and_tags",
             category_service,
         ):
-            run_agent(
-                Mock(spec=Connection),
-                client=client,
-                user_id="trusted-owner-id",
+            self.run_agent_for_test(
+                client,
                 user_message="Plan groceries",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
             )
 
         input_items = client.requests[0]["input_items"]
@@ -166,13 +159,9 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.dispatch_tool_call",
             dispatcher,
         ), self.assertLogs("tele_secretary.llm.agent", level="INFO") as logged:
-            result = run_agent(
-                Mock(spec=Connection),
-                client=client,
-                user_id="trusted-owner-id",
+            result = self.run_agent_for_test(
+                client,
                 user_message="Buy milk",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
             )
 
         self.assertEqual(result, "Added Buy milk.")
@@ -234,13 +223,9 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.list_categories_and_tags",
             return_value=VocabularyRecord(categories=(), tags=()),
         ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
-            result = run_agent(
-                Mock(spec=Connection),
-                client=client,
-                user_id="trusted-owner-id",
+            result = self.run_agent_for_test(
+                client,
                 user_message="Do something unknown",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
             )
 
         self.assertEqual(result, "I couldn't do that.")
@@ -274,13 +259,9 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.list_categories_and_tags",
             return_value=VocabularyRecord(categories=(), tags=()),
         ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
-            result = run_agent(
-                Mock(spec=Connection),
-                client=client,
-                user_id="trusted-owner-id",
+            result = self.run_agent_for_test(
+                client,
                 user_message="Create three tasks",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
             )
 
         self.assertEqual(result, "Created all tasks.")
@@ -295,13 +276,9 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.list_categories_and_tags",
             return_value=VocabularyRecord(categories=(), tags=()),
         ), self.assertLogs("tele_secretary.llm.agent", level="WARNING") as logged:
-            result = run_agent(
-                Mock(spec=Connection),
-                client=client,
-                user_id="trusted-owner-id",
+            result = self.run_agent_for_test(
+                client,
                 user_message="Hello",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
             )
 
         self.assertEqual(result, LLM_REQUEST_FAILED_TEXT)
@@ -337,13 +314,12 @@ class AgentEntryPointTests(unittest.TestCase):
                 )
 
                 with self.assertLogs("tele_secretary.llm.agent", level="WARNING"):
-                    result = run_agent(
-                        conn,
-                        client=client,
-                        user_id=user_id,
+                    result = self.run_agent_for_test(
+                        client,
                         user_message="Create my shopping tasks",
+                        conn=conn,
+                        user_id=user_id,
                         current_time=datetime(2026, 9, 13, tzinfo=timezone.utc),
-                        user_timezone="America/Chicago",
                     )
 
                 tasks = list_active_tasks(conn, user_id=user_id)
@@ -369,13 +345,9 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.list_categories_and_tags",
             return_value=VocabularyRecord(categories=(), tags=()),
         ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
-            result = run_agent(
-                Mock(spec=Connection),
-                client=client,
-                user_id="trusted-owner-id",
+            result = self.run_agent_for_test(
+                client,
                 user_message="Keep going",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
             )
 
         self.assertEqual(result, TOOL_CALL_ROUND_LIMIT_TEXT)
@@ -396,13 +368,9 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.list_categories_and_tags",
             return_value=VocabularyRecord(categories=(), tags=()),
         ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
-            result = run_agent(
-                Mock(spec=Connection),
-                client=client,
-                user_id="trusted-owner-id",
+            result = self.run_agent_for_test(
+                client,
                 user_message="Make many tasks",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
             )
 
         self.assertEqual(result, TOOL_CALL_LIMIT_TEXT)
@@ -422,13 +390,9 @@ class AgentEntryPointTests(unittest.TestCase):
             "tele_secretary.llm.agent.list_categories_and_tags",
             return_value=VocabularyRecord(categories=(), tags=()),
         ), patch("tele_secretary.llm.agent.dispatch_tool_call", dispatcher):
-            result = run_agent(
-                Mock(spec=Connection),
-                client=client,
-                user_id="trusted-owner-id",
+            result = self.run_agent_for_test(
+                client,
                 user_message="Make a large result",
-                current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                user_timezone="America/Chicago",
             )
 
         self.assertEqual(result, TOOL_RESULT_LIMIT_TEXT)
@@ -445,18 +409,33 @@ class AgentEntryPointTests(unittest.TestCase):
             return_value=VocabularyRecord(categories=(), tags=()),
         ):
             for user_message in ("First private message", "Second private message"):
-                run_agent(
-                    Mock(spec=Connection),
-                    client=client,
-                    user_id="trusted-owner-id",
+                self.run_agent_for_test(
+                    client,
                     user_message=user_message,
-                    current_time=datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
-                    user_timezone="America/Chicago",
                 )
 
         self.assertIn("First private message", client.requests[0]["input_items"])
         self.assertIn("Second private message", client.requests[1]["input_items"])
         self.assertNotIn("First private message", client.requests[1]["input_items"])
+
+    def run_agent_for_test(
+        self,
+        client: FakeLLMClient,
+        *,
+        user_message: str,
+        conn: Connection | None = None,
+        user_id: str = "trusted-owner-id",
+        current_time: datetime = datetime(2026, 9, 13, 18, 30, tzinfo=timezone.utc),
+    ) -> str:
+        """Run the real agent with common context and an optional real database."""
+        return run_agent(
+            conn if conn is not None else Mock(spec=Connection),
+            client=client,
+            user_id=user_id,
+            user_message=user_message,
+            current_time=current_time,
+            user_timezone="America/Chicago",
+        )
 
     def category(self, *, name: str) -> CategoryRecord:
         """Return one active category owned by the test user."""

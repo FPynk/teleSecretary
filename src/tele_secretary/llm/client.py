@@ -5,16 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
-# Notes to future self in temp.txt
-# review the tests that it created and then slim it down
-
-# analyse the agent.py code
-
-# client.py
-# - _to_continuation_item ask what kinds of example inputs go in
-# - need example convo and workflow to understand how this thing works
-# - what diff between function call and the sdk serializable thing, why not just have some generic turn into text function and feed it back into the LLM, LLM can probably tell function
-# - is this acting like Lang graph / lang smith basically keeping track of the conversation?
 
 class LLMClientError(RuntimeError):
     """Raised when the configured LLM provider cannot produce a usable response."""
@@ -120,7 +110,7 @@ def _to_llm_response(response: Any) -> LLMResponse:
     tool_calls: list[LLMToolCall] = []
     continuation_items: list[Mapping[str, Any]] = []
     for output_item in getattr(response, "output", ()):
-        continuation_item = _to_continuation_item(output_item)
+        continuation_item = _sdk_to_json_continuation_item(output_item)
         if continuation_item is not None:
             continuation_items.append(continuation_item)
         if getattr(output_item, "type", None) != "function_call":
@@ -146,8 +136,8 @@ def _to_llm_response(response: Any) -> LLMResponse:
     )
 
 
-def _to_continuation_item(output_item: Any) -> Mapping[str, Any] | None:
-    """Convert one provider output item into safe input for the next loop turn."""
+def _sdk_to_json_continuation_item(output_item: Any) -> Mapping[str, Any] | None:
+    """Convert one SDK output item into a JSON-compatible continuation mapping."""
     model_dump = getattr(output_item, "model_dump", None)
     if callable(model_dump):
         dumped_item = model_dump(mode="json")
