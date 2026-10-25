@@ -21,11 +21,12 @@ class LLMToolCall:
 
 @dataclass(frozen=True)
 class LLMResponse:
-    """Provider-neutral result returned to the LLM agent."""
+    """Normalized provider result returned to the LLM agent."""
 
     response_id: str
     text: str
     tool_calls: tuple[LLMToolCall, ...]
+    continuation_items: tuple[Mapping[str, Any], ...] = ()
 
 
 class LLMClient(Protocol):
@@ -107,7 +108,11 @@ def _to_llm_response(response: Any) -> LLMResponse:
         raise LLMClientError("OpenAI returned malformed response text.")
 
     tool_calls: list[LLMToolCall] = []
+    continuation_items: list[Mapping[str, Any]] = []
     for output_item in getattr(response, "output", ()):
+        continuation_item = _sdk_to_json_continuation_item(output_item)
+        if continuation_item is not None:
+            continuation_items.append(continuation_item)
         if getattr(output_item, "type", None) != "function_call":
             continue
         call_id = getattr(output_item, "call_id", None)
@@ -127,4 +132,27 @@ def _to_llm_response(response: Any) -> LLMResponse:
         response_id=response_id,
         text=output_text,
         tool_calls=tuple(tool_calls),
+        continuation_items=tuple(continuation_items),
     )
+
+
+def _sdk_to_json_continuation_item(output_item: Any) -> Mapping[str, Any] | None:
+    """Convert one SDK output item into a JSON-compatible continuation mapping."""
+    model_dump = getattr(output_item, "model_dump", None)
+    if callable(model_dump):
+        dumped_item = model_dump(mode="json")
+        if isinstance(dumped_item, Mapping):
+            return dumped_item
+
+    if getattr(output_item, "type", None) == "function_call":
+        call_id = getattr(output_item, "call_id", None)
+        name = getattr(output_item, "name", None)
+        arguments = getattr(output_item, "arguments", None)
+        if all(isinstance(value, str) and value for value in (call_id, name, arguments)):
+            return {
+                "type": "function_call",
+                "call_id": call_id,
+                "name": name,
+                "arguments": arguments,
+            }
+    return None
