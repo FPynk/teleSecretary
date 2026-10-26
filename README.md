@@ -144,3 +144,27 @@ Docker Compose mounts:
 
 The container stores SQLite at `/data/secretary.sqlite3` and logs at
 `/logs/secretary.log`.
+
+### Troubleshooting natural-language requests
+
+At the default `INFO` log level, LLM diagnostics are written to the same
+`logs/secretary.log` on the machine running the app. On the homelab:
+
+```bash
+cd /srv/apps/teleSecretary
+tail -f logs/secretary.log | grep --line-buffered '"event":"llm_'
+```
+
+Each message has an `operation_id`; filter by that value to follow one request.
+`round:1` is the initial model request, and later rounds include tool results.
+`llm_tool_completed` records `ok` and the application `error_code`.
+`llm_client_failed` distinguishes the `request` and `normalization` stages and
+includes HTTP status, provider request ID, known error code, and structural
+parameter path when available. `llm_operation_finished` gives the exit reason
+and number of confirmed saved tasks. Request/response item types and the count
+of reasoning items with encrypted content help diagnose continuation failures.
+
+These are metadata logs, not conversation dumps: prompts, message text, task
+contents, tool arguments/results, raw provider error text, and credentials are
+not logged. Unknown error codes are reported as `other`; unknown parameter paths
+are omitted. Existing historical entries cannot gain these details retroactively.

@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+from time import monotonic
 from typing import Any, Mapping, Protocol, Sequence
 
+from tele_secretary.llm.diagnostics import (
+    input_structure, log_llm_event, safe_error_code, safe_error_param, safe_model_name,
+    safe_provider_id,
+)
+
+
+LOGGER = logging.getLogger(__name__)
 
 class LLMClientError(RuntimeError):
     """Raised when the configured LLM provider cannot produce a usable response."""
@@ -69,6 +78,11 @@ class OpenAIResponsesClient:
         tool_definitions: Sequence[Mapping[str, Any]] = (),
     ) -> LLMResponse:
         """Request one stateless OpenAI response and normalize its output."""
+        started = monotonic()
+        log_llm_event(
+            LOGGER, logging.INFO, "llm_client_started", model=safe_model_name(self._model),
+            **input_structure(input_items),
+        )
         try:
             response = self._sdk_client.responses.create(
                 model=self._model,
@@ -78,9 +92,67 @@ class OpenAIResponsesClient:
                 store=False,
             )
         except Exception as error:
+            _log_client_failure(error, stage="request", started=started)
             raise LLMClientError("OpenAI request failed.") from error
 
-        return _to_llm_response(response)
+        output_items = getattr(response, "output", None)
+        output_structure = input_structure([
+            {"type": getattr(item, "type", None),
+             "encrypted_content": bool(getattr(item, "encrypted_content", None))}
+            for item in (output_items if isinstance(output_items, (list, tuple)) else ())
+        ])
+        log_llm_event(
+            LOGGER, logging.INFO, "llm_client_received",
+            provider_request_id=safe_provider_id(getattr(response, "_request_id", None)),
+            response_id=safe_provider_id(getattr(response, "id", None)),
+            status=(getattr(response, "status", None)
+                    if getattr(response, "status", None) in ("completed", "incomplete", "failed")
+                    else "other"),
+            output_types=output_structure["input_types"],
+            encrypted_reasoning_count=output_structure["encrypted_reasoning_count"],
+        )
+        try:
+            normalized = _to_llm_response(response)
+        except Exception as error:
+            _log_client_failure(
+                error, stage="normalization", started=started,
+                provider_request_id=getattr(response, "_request_id", None),
+            )
+            if isinstance(error, LLMClientError):
+                raise
+            raise LLMClientError("OpenAI returned an unusable response.") from error
+        log_llm_event(
+            LOGGER, logging.INFO, "llm_client_completed",
+            duration_ms=round((monotonic() - started) * 1000, 2),
+            tool_call_count=len(normalized.tool_calls),
+        )
+        return normalized
+
+
+def _log_client_failure(
+    error: Exception, *, stage: str, started: float, provider_request_id: object = None,
+) -> None:
+    """Report machine error fields without raw exception text, bodies, or tracebacks."""
+    status_code = getattr(error, "status_code", None)
+    validation_reason = None
+    if stage == "normalization":
+        validation_reason = {
+            "OpenAI returned a response without an ID.": "missing_response_id",
+            "OpenAI returned malformed response text.": "malformed_text",
+            "OpenAI returned a malformed function call.": "malformed_function_call",
+        }.get(str(error), "unusable_response")
+    log_llm_event(
+        LOGGER, logging.WARNING, "llm_client_failed", stage=stage,
+        exception_type=type(error).__name__,
+        status_code=status_code if type(status_code) is int else None,
+        provider_request_id=safe_provider_id(
+            provider_request_id or getattr(error, "request_id", None)
+        ),
+        error_code=safe_error_code(getattr(error, "code", None)),
+        error_param=safe_error_param(getattr(error, "param", None)),
+        validation_reason=validation_reason,
+        duration_ms=round((monotonic() - started) * 1000, 2),
+    )
 
 
 def _build_openai_sdk_client(api_key: str) -> Any:
