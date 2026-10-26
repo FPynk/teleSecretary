@@ -1,4 +1,4 @@
-"""Content-free diagnostic events correlated within one agent operation."""
+"""Correlated metadata and credential-redacted, opt-in LLM transcripts."""
 
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -34,11 +34,34 @@ def llm_operation() -> Iterator[None]:
 
 
 def log_llm_event(logger: logging.Logger, level: int, event: str, **fields: object) -> None:
-    """Write JSON metadata supplied by call sites, never request or response bodies."""
+    """Write one JSON event in the current message's diagnostic context."""
     operation_id, round_number = LLM_LOG_CONTEXT.get()
     logger.log(level, json.dumps({
         "event": event, "operation_id": operation_id, "round": round_number, **fields,
     }, separators=(",", ":")))
+
+
+def redact_transcript(payload: object, secrets: Sequence[str]) -> object:
+    """Serialize SDK values, omitting opaque reasoning and masking credentials."""
+    def to_json(value: object) -> object:
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return model_dump(mode="json")
+        return {"unserializable_type": type(value).__name__}
+
+    transcript = json.loads(
+        json.dumps(payload, default=to_json),
+        object_hook=lambda fields: {
+            key: "<omitted>" if key == "encrypted_content" else value
+            for key, value in fields.items()
+        },
+    )
+    serialized = json.dumps(transcript, ensure_ascii=False)
+    for secret in sorted((value for value in secrets if value), key=len, reverse=True):
+        serialized = serialized.replace(json.dumps(secret, ensure_ascii=False)[1:-1], "<redacted>")
+    serialized = re.sub(r"sk-[A-Za-z0-9_-]+", "<redacted>", serialized)
+    serialized = re.sub(r"(?<!\d)\d{6,}:[A-Za-z0-9_-]{15,}", "<redacted>", serialized)
+    return json.loads(serialized)
 
 
 def safe_provider_id(value: object) -> str | None:

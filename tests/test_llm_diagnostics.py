@@ -34,6 +34,47 @@ class BadRequestError(RuntimeError):
 class LLMDiagnosticsTests(unittest.TestCase):
     """Pin the evidence needed to debug failures without exposing content."""
 
+    def test_opt_in_dumps_requests_responses_and_errors_with_credentials_redacted(self):
+        """A debugging transcript keeps content but removes credentials and opaque reasoning."""
+        api_key = "sk-secret-configured-key"
+        bot_token = "123456789:telegram-secret-token"
+        raw_response = {
+            "id": "resp_dump", "output": [{
+                "type": "message", "content": [{"type": "output_text", "text": PRIVATE_TEXT}],
+            }, {"type": "reasoning", "encrypted_content": "OPAQUE-REASONING"}],
+        }
+        response = SimpleNamespace(
+            id="resp_dump", output_text=PRIVATE_TEXT, output=[],
+            model_dump=lambda **kwargs: raw_response,
+        )
+        error = BadRequestError(f"Rejected {api_key}")
+        error.body = {"message": f"Bad argument containing {bot_token}"}
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=Mock(side_effect=[response, error])))
+        client = OpenAIResponsesClient(
+            api_key=api_key, model="gpt-test", sdk_client=sdk,
+            log_transcripts=True, secrets_to_redact=(bot_token,),
+        )
+        input_items = [
+            {"role": "user", "content": f"{PRIVATE_TEXT} {api_key} {bot_token}"},
+            {"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'},
+        ]
+        with self.assertLogs("tele_secretary.llm.client", level="INFO") as logged:
+            client.create_response(instructions="Static prompt", input_items=input_items)
+            with self.assertRaises(LLMClientError):
+                client.create_response(instructions="Static prompt", input_items=input_items)
+        events = [json.loads(record.getMessage()) for record in logged.records]
+        request_dump = next(event["transcript"] for event in events if event["event"] == "llm_transcript_request")
+        response_dump = next(event["transcript"] for event in events if event["event"] == "llm_transcript_response")
+        error_dump = next(event["transcript"] for event in events if event["event"] == "llm_transcript_error")
+        self.assertEqual(request_dump["instructions"], "Static prompt")
+        self.assertIn(PRIVATE_TEXT, request_dump["input"][0]["content"])
+        self.assertEqual(request_dump["input"][1]["output"], '{"ok":true}')
+        self.assertEqual(response_dump["output"][0]["content"][0]["text"], PRIVATE_TEXT)
+        self.assertIn("Rejected", error_dump["message"])
+        self.assertNotIn(api_key, "\n".join(logged.output))
+        self.assertNotIn(bot_token, "\n".join(logged.output))
+        self.assertNotIn("OPAQUE-REASONING", "\n".join(logged.output))
+
     def test_correlates_saved_or_rejected_tool_with_follow_up_failure(self):
         """Tool outcomes and failed provider rounds share a per-message ID."""
         for confidence, expected_code in ((None, None), (2, "invalid_parse_confidence")):

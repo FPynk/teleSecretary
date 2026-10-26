@@ -164,7 +164,33 @@ parameter path when available. `llm_operation_finished` gives the exit reason
 and number of confirmed saved tasks. Request/response item types and the count
 of reasoning items with encrypted content help diagnose continuation failures.
 
-These are metadata logs, not conversation dumps: prompts, message text, task
-contents, tool arguments/results, raw provider error text, and credentials are
-not logged. Unknown error codes are reported as `other`; unknown parameter paths
-are omitted. Existing historical entries cannot gain these details retroactively.
+By default these are metadata logs: prompts, message text, task contents, tool
+arguments/results and raw provider error text are not logged. Unknown error codes
+are reported as `other`; unknown parameter paths are omitted.
+
+For a per-request conversation dump, set this in the homelab's `.env`:
+
+```dotenv
+SECRETARY_LLM_LOG_TRANSCRIPTS=true
+```
+
+Recreate the container to load the setting:
+
+```bash
+docker compose up -d --build --force-recreate app
+tail -f logs/secretary.log | grep --line-buffered '"event":"llm_transcript_'
+```
+
+The `llm_transcript_request` event includes the system prompt and complete current
+input, including previous model tool calls and Python tool results. The
+`llm_transcript_response` event contains the provider's response, including model
+text and proposed tool arguments. A rejected request produces a
+`llm_transcript_error` with provider error details. Events retain the same
+`operation_id` and `round` as the metadata logs; this does not enable memory across
+separate Telegram messages.
+
+Transcript logging includes private message and task contents. Configured API
+keys and Telegram tokens are redacted, and opaque encrypted reasoning payloads
+are omitted. Set the flag back to `false` and recreate the container after
+debugging. Disabling it does not remove existing dumps from the log file.
+Historical failures cannot gain transcript details retroactively.

@@ -120,7 +120,10 @@ class TelegramBotSchedulerLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 message=SimpleNamespace(text="/unknown", reply_text=AsyncMock()),
             )
             await text_handler.callback(command, SimpleNamespace())
-            client_factory.assert_called_once_with(api_key="test-key", model="test-model")
+            client_factory.assert_called_once_with(
+                api_key="test-key", model="test-model", log_transcripts=False,
+                secrets_to_redact=("test-token",),
+            )
             self.assertEqual(client.create_response.call_count, 2)
             second_input = client.create_response.call_args.kwargs["input_items"]
             self.assertIn("Second private message", second_input)

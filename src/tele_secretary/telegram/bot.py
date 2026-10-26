@@ -185,7 +185,11 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("unremind", _unremind_handler(config)))
     client = None
     if config.openai_api_key and config.openai_model:
-        client = OpenAIResponsesClient(api_key=config.openai_api_key, model=config.openai_model)
+        client = OpenAIResponsesClient(
+            api_key=config.openai_api_key, model=config.openai_model,
+            log_transcripts=config.llm_log_transcripts,
+            secrets_to_redact=(config.telegram_bot_token or "",),
+        )
         application.bot_data[LLM_CLIENT_BOT_DATA_KEY] = client
     application.add_handler(MessageHandler(
         filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND,

@@ -9,7 +9,7 @@ from typing import Any, Mapping, Protocol, Sequence
 
 from tele_secretary.llm.diagnostics import (
     input_structure, log_llm_event, safe_error_code, safe_error_param, safe_model_name,
-    safe_provider_id,
+    safe_provider_id, redact_transcript,
 )
 
 
@@ -60,10 +60,14 @@ class OpenAIResponsesClient:
         api_key: str,
         model: str,
         sdk_client: Any | None = None,
+        log_transcripts: bool = False,
+        secrets_to_redact: Sequence[str] = (),
     ) -> None:
         """Create a client with injected SDK support for deterministic tests."""
         self._api_key = _require_nonempty_value(api_key, "api_key")
         self._model = _require_nonempty_value(model, "model")
+        self._log_transcripts = log_transcripts
+        self._secrets_to_redact = (self._api_key, *secrets_to_redact)
         self._sdk_client = sdk_client or _build_openai_sdk_client(self._api_key)
 
     def close(self) -> None:
@@ -83,6 +87,10 @@ class OpenAIResponsesClient:
             LOGGER, logging.INFO, "llm_client_started", model=safe_model_name(self._model),
             **input_structure(input_items),
         )
+        self._log_transcript("llm_transcript_request", {
+            "model": self._model, "instructions": instructions,
+            "input": input_items, "tools": tool_definitions,
+        })
         try:
             response = self._sdk_client.responses.create(
                 model=self._model,
@@ -92,9 +100,13 @@ class OpenAIResponsesClient:
                 store=False,
             )
         except Exception as error:
+            self._log_transcript("llm_transcript_error", {
+                "message": str(error), "body": getattr(error, "body", None),
+            })
             _log_client_failure(error, stage="request", started=started)
             raise LLMClientError("OpenAI request failed.") from error
 
+        self._log_transcript("llm_transcript_response", response)
         output_items = getattr(response, "output", None)
         output_structure = input_structure([
             {"type": getattr(item, "type", None),
@@ -127,6 +139,17 @@ class OpenAIResponsesClient:
             tool_call_count=len(normalized.tool_calls),
         )
         return normalized
+
+    def _log_transcript(self, event: str, payload: object) -> None:
+        """Dump request-local content only when explicitly enabled by configuration."""
+        if not self._log_transcripts:
+            return
+        try:
+            transcript = redact_transcript(payload, self._secrets_to_redact)
+        except Exception:
+            log_llm_event(LOGGER, logging.WARNING, "llm_transcript_unavailable")
+            return
+        log_llm_event(LOGGER, logging.INFO, event, transcript=transcript)
 
 
 def _log_client_failure(
