@@ -9,6 +9,14 @@ from tele_secretary.config import AppConfig, ConfigError, load_env_file
 
 
 class ConfigTests(unittest.TestCase):
+    def test_llm_transcripts_require_explicit_valid_opt_in(self) -> None:
+        """Verbose content logging is disabled unless deliberately enabled."""
+        self.assertFalse(AppConfig.from_env({}).llm_log_transcripts)
+        self.assertTrue(AppConfig.from_env({"SECRETARY_LLM_LOG_TRANSCRIPTS": "true"}).llm_log_transcripts)
+        self.assertFalse(AppConfig.from_env({"SECRETARY_LLM_LOG_TRANSCRIPTS": "false"}).llm_log_transcripts)
+        with self.assertRaises(ConfigError):
+            AppConfig.from_env({"SECRETARY_LLM_LOG_TRANSCRIPTS": "maybe"})
+
     def test_config_loads_defaults_and_normalizes_allowed_user_ids(self) -> None:
         config = AppConfig.from_env(
             {

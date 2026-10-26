@@ -24,6 +24,7 @@ class AppConfig:
     log_level: str
     openai_api_key: str | None = field(default=None, repr=False)
     openai_model: str | None = None
+    llm_log_transcripts: bool = False
 
     def __post_init__(self) -> None:
         """Normalize duplicate allowlist entries to one authorized identity."""
@@ -63,6 +64,10 @@ class AppConfig:
                 "OPENAI_API_KEY and OPENAI_MODEL must both be set or both be empty."
             )
 
+        transcript_setting = values.get("SECRETARY_LLM_LOG_TRANSCRIPTS", "false").strip().lower()
+        if transcript_setting not in {"true", "false"}:
+            raise ConfigError("SECRETARY_LLM_LOG_TRANSCRIPTS must be true or false.")
+
         return cls(
             telegram_bot_token=bot_token,
             telegram_allowed_user_ids=_parse_allowed_user_ids(
@@ -75,6 +80,7 @@ class AppConfig:
             log_level=values.get("SECRETARY_LOG_LEVEL", "INFO").strip().upper(),
             openai_api_key=openai_api_key,
             openai_model=openai_model,
+            llm_log_transcripts=transcript_setting == "true",
         )
 
 

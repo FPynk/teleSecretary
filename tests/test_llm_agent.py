@@ -172,10 +172,11 @@ class AgentEntryPointTests(unittest.TestCase):
             name="create_task_tool",
             arguments_json='{"title":"Buy milk"}',
         )
-        self.assertEqual(
-            logged.output,
-            ["INFO:tele_secretary.llm.agent:LLM tool calls requested count=1"],
-        )
+        tool_events = [json.loads(record.getMessage()) for record in logged.records
+                       if json.loads(record.getMessage())["event"] == "llm_tool_completed"]
+        self.assertEqual(len(tool_events), 1)
+        self.assertTrue(tool_events[0]["ok"])
+        self.assertNotIn("Buy milk", "\n".join(logged.output))
         self.assertEqual(
             client.requests[1]["input_items"][-2:],
             [
@@ -282,10 +283,10 @@ class AgentEntryPointTests(unittest.TestCase):
             )
 
         self.assertEqual(result, LLM_REQUEST_FAILED_TEXT)
-        self.assertEqual(
-            logged.output,
-            ["WARNING:tele_secretary.llm.agent:LLM provider request failed."],
-        )
+        failure = json.loads(logged.records[0].getMessage())
+        self.assertEqual(failure["event"], "llm_round_failed")
+        self.assertEqual(failure["saved_task_count"], 0)
+        self.assertNotIn("provider details", "\n".join(logged.output))
 
     def test_confirms_persisted_tasks_when_follow_up_provider_request_fails(self) -> None:
         """A failed follow-up must not invite users to repeat committed writes."""

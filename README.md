@@ -144,3 +144,53 @@ Docker Compose mounts:
 
 The container stores SQLite at `/data/secretary.sqlite3` and logs at
 `/logs/secretary.log`.
+
+### Troubleshooting natural-language requests
+
+At the default `INFO` log level, LLM diagnostics are written to the same
+`logs/secretary.log` on the machine running the app. On the homelab:
+
+```bash
+cd /srv/apps/teleSecretary
+tail -f logs/secretary.log | grep --line-buffered '"event":"llm_'
+```
+
+Each message has an `operation_id`; filter by that value to follow one request.
+`round:1` is the initial model request, and later rounds include tool results.
+`llm_tool_completed` records `ok` and the application `error_code`.
+`llm_client_failed` distinguishes the `request` and `normalization` stages and
+includes HTTP status, provider request ID, known error code, and structural
+parameter path when available. `llm_operation_finished` gives the exit reason
+and number of confirmed saved tasks. Request/response item types and the count
+of reasoning items with encrypted content help diagnose continuation failures.
+
+By default these are metadata logs: prompts, message text, task contents, tool
+arguments/results and raw provider error text are not logged. Unknown error codes
+are reported as `other`; unknown parameter paths are omitted.
+
+For a per-request conversation dump, set this in the homelab's `.env`:
+
+```dotenv
+SECRETARY_LLM_LOG_TRANSCRIPTS=true
+```
+
+Recreate the container to load the setting:
+
+```bash
+docker compose up -d --build --force-recreate app
+tail -f logs/secretary.log | grep --line-buffered '"event":"llm_transcript_'
+```
+
+The `llm_transcript_request` event includes the system prompt and complete current
+input, including previous model tool calls and Python tool results. The
+`llm_transcript_response` event contains the provider's response, including model
+text and proposed tool arguments. A rejected request produces a
+`llm_transcript_error` with provider error details. Events retain the same
+`operation_id` and `round` as the metadata logs; this does not enable memory across
+separate Telegram messages.
+
+Transcript logging includes private message and task contents. Configured API
+keys and Telegram tokens are redacted, and opaque encrypted reasoning payloads
+are omitted. Set the flag back to `false` and recreate the container after
+debugging. Disabling it does not remove existing dumps from the log file.
+Historical failures cannot gain transcript details retroactively.

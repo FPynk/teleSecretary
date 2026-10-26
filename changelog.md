@@ -2,6 +2,10 @@
 
 ## 2026-10-25
 
+- Added correlated LLM diagnostics for model rounds, tool outcomes, continuation
+  structure, and safe provider error metadata without recording private contents.
+- Added opt-in request/response transcript dumps for LLM debugging, with
+  credential redaction and opaque encrypted reasoning omitted.
 - Connected authorised ordinary Telegram text to the stateless LLM task-creation
   loop, using each sender's persisted identity and timezone. Existing commands
   keep their deterministic behaviour.
