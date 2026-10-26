@@ -57,6 +57,10 @@ class OpenAIResponsesClient:
         self._model = _require_nonempty_value(model, "model")
         self._sdk_client = sdk_client or _build_openai_sdk_client(self._api_key)
 
+    def close(self) -> None:
+        """Release the SDK's HTTP resources when the owning application shuts down."""
+        self._sdk_client.close()
+
     def create_response(
         self,
         *,

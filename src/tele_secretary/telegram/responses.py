@@ -318,4 +318,14 @@ def build_task_owner_not_configured_response() -> str:
 
 
 def build_unauthorized_response() -> str:
-    return "This Telegram account is not authorized to use TeleSecretary."
+    return "This Telegram account is not authorised to use TeleSecretary."
+
+
+def build_natural_language_disabled_response() -> str:
+    """Explain how to use the bot when its natural-language adapter is disabled."""
+    return "Natural-language support is disabled. Please use slash commands such as /addtask and /list."
+
+
+def build_natural_language_failure_response() -> str:
+    """Avoid implying a failed response guarantees that no task was saved."""
+    return "I couldn't finish that request. Check /list before trying again."

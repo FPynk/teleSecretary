@@ -75,10 +75,10 @@ class TelegramMultiUserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user_count, 0)
         self.assertEqual(ping_update.message.replies, ["pong"])
         self.assertEqual(unauthorized_update.message.replies, [
-            "This Telegram account is not authorized to use TeleSecretary."
+            "This Telegram account is not authorised to use TeleSecretary."
         ])
         self.assertEqual(missing_user_update.message.replies, [
-            "This Telegram account is not authorized to use TeleSecretary."
+            "This Telegram account is not authorised to use TeleSecretary."
         ])
 
     async def test_two_users_keep_commands_references_and_reminders_isolated(self) -> None:

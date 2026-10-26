@@ -24,7 +24,27 @@ pending reminder and safely asks for clarification when several exist. The bot
 also runs one reminder-processing cycle at startup and then every 30 seconds:
 it recovers abandoned leases, delivers due reminders, summarizes four or more
 moderately stale reminders for one owner, and processes eligible retries.
-Natural-language parsing and LLM integration are later phases.
+Authorised ordinary text can create tasks through the stateless LLM tool loop
+when OpenAI support is configured. Slash commands remain deterministic.
+
+## Natural Language
+
+Set both `OPENAI_API_KEY` and `OPENAI_MODEL` in `.env` to enable natural-language
+requests. Leave both empty to disable them; ordinary text then receives guidance
+to use slash commands. The existing Telegram allowlist applies before database
+or model work, and each request uses the sender's persisted timezone.
+
+For example, send `Add a task to submit my expense report tomorrow at 5pm`.
+The model proposes task details, the application validates and saves them for
+your account, and the bot replies in the same chat. Only task creation is
+currently exposed to the model; use slash commands to view, edit, or remind.
+Each message is independent, so include all necessary details rather than
+referring to an earlier conversation. Replies use British English spelling.
+
+Commands, media, captions, and edited messages do not enter the LLM path. Long
+replies are split into Telegram-sized messages. If a failure occurs, follow the
+reply's guidance and check `/list` before repeating a creation that may have
+already succeeded. The shared provider client is closed when the bot shuts down.
 
 ## Architecture
 

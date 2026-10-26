@@ -234,7 +234,7 @@ class TelegramEditCommandTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             unauthorized_update.message.replies,
-            ["This Telegram account is not authorized to use TeleSecretary."],
+            ["This Telegram account is not authorised to use TeleSecretary."],
         )
 
     def seed_user_vocabulary_and_task(self, conn, config: AppConfig) -> str:

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-import sys
 import tempfile
-import types
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import _path  # noqa: F401
+from telegram_helpers import FakeCommandHandler, fake_telegram_modules
 from db_helpers import open_test_database
 from tele_secretary.app.reminder_time_parser import ParsedReminderTime, ReminderTimeWarning
 from tele_secretary.app.reminders import ReminderNotFoundError
@@ -101,7 +100,7 @@ class TelegramRemindCommandTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             unauthorized_update.message.replies,
-            ["This Telegram account is not authorized to use TeleSecretary."],
+            ["This Telegram account is not authorised to use TeleSecretary."],
         )
 
     async def test_missing_expression_names_the_owned_task_without_creating_a_reminder(self) -> None:
@@ -402,54 +401,12 @@ class TelegramRemindResponseTests(unittest.TestCase):
 
 class TelegramRemindRegistrationTests(unittest.TestCase):
     def test_application_registers_remind_command(self) -> None:
-        class FakeCommandHandler:
-            def __init__(self, command, callback) -> None:
-                self.command = command
-                self.callback = callback
-
-        class FakeApplication:
-            def __init__(self) -> None:
-                self.handlers = []
-
-            @classmethod
-            def builder(cls):
-                return FakeApplicationBuilder()
-
-            def add_handler(self, handler) -> None:
-                self.handlers.append(handler)
-
-        class FakeApplicationBuilder:
-            def __init__(self) -> None:
-                self.application = FakeApplication()
-
-            def token(self, token):
-                return self
-
-            def post_init(self, callback):
-                self.application.post_init = callback
-                return self
-
-            def post_stop(self, callback):
-                self.application.post_stop = callback
-                return self
-
-            def build(self):
-                return self.application
-
-        telegram_module = types.ModuleType("telegram")
-        telegram_ext_module = types.ModuleType("telegram.ext")
-        telegram_ext_module.Application = FakeApplication
-        telegram_ext_module.CommandHandler = FakeCommandHandler
-        telegram_module.ext = telegram_ext_module
         with tempfile.TemporaryDirectory() as temp_dir:
             config = TelegramRemindCommandTests().build_config(Path(temp_dir))
-            with patch.dict(
-                sys.modules,
-                {"telegram": telegram_module, "telegram.ext": telegram_ext_module},
-            ):
+            with fake_telegram_modules():
                 application = build_application(config)
 
-        self.assertIn("remind", [handler.command for handler in application.handlers])
+        self.assertIn("remind", [handler.command for handler in application.handlers if isinstance(handler, FakeCommandHandler)])
 
 
 if __name__ == "__main__":
