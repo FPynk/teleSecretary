@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-25
+
+- Connected authorised ordinary Telegram text to the stateless LLM task-creation
+  loop, using each sender's persisted identity and timezone. Existing commands
+  keep their deterministic behaviour.
+- Added a reusable authorisation gate, disabled-mode guidance, safe error replies,
+  long-reply splitting, and shared provider-client shutdown cleanup.
+- Requested British English in runtime responses and updated the unauthorised
+  account reply to match.
+
 ## 2026-08-16
 
 - Added `/delete T<number>` for owner-scoped soft deletion of active or
