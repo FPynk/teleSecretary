@@ -215,7 +215,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             update.message.replies,
-            ["This Telegram account is not authorized to use TeleSecretary."],
+            ["This Telegram account is not authorised to use TeleSecretary."],
         )
 
     def test_addtask_parser_accepts_bot_username_suffix(self) -> None:
@@ -360,7 +360,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             update.message.replies,
-            ["This Telegram account is not authorized to use TeleSecretary."],
+            ["This Telegram account is not authorised to use TeleSecretary."],
         )
 
     async def test_reopen_command_reopens_completed_task(self) -> None:
@@ -529,7 +529,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             update.message.replies,
-            ["This Telegram account is not authorized to use TeleSecretary."],
+            ["This Telegram account is not authorised to use TeleSecretary."],
         )
 
     async def test_done_command_completes_an_active_task(self) -> None:
@@ -710,7 +710,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             update.message.replies,
-            ["This Telegram account is not authorized to use TeleSecretary."],
+            ["This Telegram account is not authorised to use TeleSecretary."],
         )
 
     async def test_today_command_shows_focus_tasks_and_empty_state(self) -> None:
@@ -754,7 +754,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             update.message.replies,
-            ["This Telegram account is not authorized to use TeleSecretary."],
+            ["This Telegram account is not authorised to use TeleSecretary."],
         )
 
     def test_show_parser_accepts_refs_and_rejects_extra_or_invalid_arguments(self) -> None:
@@ -812,7 +812,7 @@ class TelegramListCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             update.message.replies,
-            ["This Telegram account is not authorized to use TeleSecretary."],
+            ["This Telegram account is not authorised to use TeleSecretary."],
         )
 
     def build_config(

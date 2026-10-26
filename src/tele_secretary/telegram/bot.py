@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 import logging
@@ -10,6 +11,8 @@ import sqlite3
 from typing import Any
 
 from tele_secretary.config import AppConfig
+from tele_secretary.llm.client import OpenAIResponsesClient
+from tele_secretary.telegram.natural_language import build_natural_language_handler
 from tele_secretary.app.reminder_time_parser import (
     ParsedReminderTime,
     ReminderTimeParseError,
@@ -101,6 +104,7 @@ DUE_COMMAND_TOKEN_PATTERN = re.compile(r"/due(?:@[A-Za-z0-9_]+)?", re.IGNORECASE
 URGENT_COMMAND_TOKEN_PATTERN = re.compile(r"/urgent(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 DELETE_COMMAND_TOKEN_PATTERN = re.compile(r"/delete(?:@[A-Za-z0-9_]+)?", re.IGNORECASE)
 SCHEDULER_BOT_DATA_KEY = "_tele_secretary_reminder_scheduler"
+LLM_CLIENT_BOT_DATA_KEY = "_tele_secretary_llm_client"
 
 
 @dataclass(frozen=True)
@@ -150,7 +154,7 @@ def run_bot(config: AppConfig) -> None:
 def build_application(config: AppConfig) -> Any:
     """Build the configured Telegram application and register its commands."""
     try:
-        from telegram.ext import Application, CommandHandler
+        from telegram.ext import Application, CommandHandler, MessageHandler, filters
     except ImportError as exc:
         raise RuntimeError(
             "python-telegram-bot is not installed. "
@@ -162,6 +166,7 @@ def build_application(config: AppConfig) -> Any:
         .token(config.telegram_bot_token)
         .post_init(_scheduler_post_init(config))
         .post_stop(_scheduler_post_stop)
+        .post_shutdown(_llm_post_shutdown)
         .build()
     )
     application.add_handler(CommandHandler("ping", _ping_handler(config)))
@@ -178,6 +183,14 @@ def build_application(config: AppConfig) -> Any:
     application.add_handler(CommandHandler("urgent", _urgent_handler(config)))
     application.add_handler(CommandHandler("remind", _remind_handler(config)))
     application.add_handler(CommandHandler("unremind", _unremind_handler(config)))
+    client = None
+    if config.openai_api_key and config.openai_model:
+        client = OpenAIResponsesClient(api_key=config.openai_api_key, model=config.openai_model)
+        application.bot_data[LLM_CLIENT_BOT_DATA_KEY] = client
+    application.add_handler(MessageHandler(
+        filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND,
+        build_natural_language_handler(config, client=client),
+    ))
     return application
 
 
@@ -208,6 +221,13 @@ async def _scheduler_post_stop(application: Any) -> None:
     scheduler = application.bot_data.get(SCHEDULER_BOT_DATA_KEY)
     if scheduler is not None:
         await scheduler.stop()
+
+
+async def _llm_post_shutdown(application: Any) -> None:
+    """Close the shared LLM client after Telegram has finished processing updates."""
+    client = application.bot_data.pop(LLM_CLIENT_BOT_DATA_KEY, None)
+    if client is not None:
+        await asyncio.to_thread(client.close)
 
 
 def _ping_handler(config: AppConfig) -> Any:

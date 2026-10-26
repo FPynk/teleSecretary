@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 import unittest
+from unittest.mock import Mock
 
 import _path  # noqa: F401
 from tele_secretary.llm.client import LLMClientError, OpenAIResponsesClient
@@ -54,6 +55,14 @@ class FakeOpenAIClient:
 
 class OpenAIResponsesClientTests(unittest.TestCase):
     """Verify OpenAI conversion without making live provider calls."""
+
+    def test_close_releases_sdk_resources(self) -> None:
+        """The owning application can explicitly close the SDK's HTTP client."""
+        sdk_client = FakeOpenAIClient(FakeResponse(id="resp_1", output_text="", output=[]))
+        sdk_client.close = Mock()
+        client = OpenAIResponsesClient(api_key="test-key", model="test-model", sdk_client=sdk_client)
+        client.close()
+        sdk_client.close.assert_called_once_with()
 
     def test_sends_a_stateless_request_and_normalizes_function_calls(self) -> None:
         """The adapter translates provider output into the agent-facing result."""
