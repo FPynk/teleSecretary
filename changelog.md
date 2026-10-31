@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-31
+
+- Fixed reasoning-item replay to omit SDK-added defaults and null reasoning
+  status while preserving tool calls and encrypted context. Metadata diagnostics
+  now retain rejected status-field parameter paths.
+
 ## 2026-10-25
 
 - Added correlated LLM diagnostics for model rounds, tool outcomes, continuation

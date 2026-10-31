@@ -237,11 +237,19 @@ def _to_llm_response(response: Any) -> LLMResponse:
 
 def _sdk_to_json_continuation_item(output_item: Any) -> Mapping[str, Any] | None:
     """Convert one SDK output item into a JSON-compatible continuation mapping."""
+    to_dict = getattr(output_item, "to_dict", None)
     model_dump = getattr(output_item, "model_dump", None)
-    if callable(model_dump):
-        dumped_item = model_dump(mode="json")
-        if isinstance(dumped_item, Mapping):
-            return dumped_item
+    if callable(to_dict):
+        dumped_item = to_dict(mode="json")
+    elif callable(model_dump):
+        dumped_item = model_dump(mode="json", by_alias=True, exclude_unset=True)
+    else:
+        dumped_item = None
+    if isinstance(dumped_item, Mapping):
+        # The deployed API rejects a reasoning item's status when it is null.
+        if dumped_item.get("type") == "reasoning" and dumped_item.get("status") is None:
+            dumped_item = {key: value for key, value in dumped_item.items() if key != "status"}
+        return dumped_item
 
     if getattr(output_item, "type", None) == "function_call":
         call_id = getattr(output_item, "call_id", None)
