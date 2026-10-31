@@ -34,6 +34,21 @@ class BadRequestError(RuntimeError):
 class LLMDiagnosticsTests(unittest.TestCase):
     """Pin the evidence needed to debug failures without exposing content."""
 
+    def test_metadata_reports_status_parameter_without_private_error_body(self):
+        """The structural path rejected in production must survive metadata filtering."""
+        error = BadRequestError(PRIVATE_TEXT)
+        error.param = "input[1].status"
+        client = OpenAIResponsesClient(
+            api_key="test-key", model="gpt-test",
+            sdk_client=SimpleNamespace(responses=SimpleNamespace(create=Mock(side_effect=error))),
+        )
+        with self.assertLogs("tele_secretary.llm.client", level="WARNING") as logged:
+            with self.assertRaises(LLMClientError):
+                client.create_response(instructions=PRIVATE_TEXT, input_items=PRIVATE_TEXT)
+        failure = json.loads(logged.records[0].getMessage())
+        self.assertEqual(failure["error_param"], "input[1].status")
+        self.assertNotIn(PRIVATE_TEXT, "\n".join(logged.output))
+
     def test_opt_in_dumps_requests_responses_and_errors_with_credentials_redacted(self):
         """A debugging transcript keeps content but removes credentials and opaque reasoning."""
         api_key = "sk-secret-configured-key"

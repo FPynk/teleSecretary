@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any
 import unittest
 from unittest.mock import Mock
 
 import _path  # noqa: F401
-from tele_secretary.llm.client import LLMClientError, OpenAIResponsesClient
+from tele_secretary.llm.client import (
+    LLMClientError, OpenAIResponsesClient, _sdk_to_json_continuation_item,
+)
 
 @dataclass
 class FakeOutputItem:
@@ -55,6 +58,35 @@ class FakeOpenAIClient:
 
 class OpenAIResponsesClientTests(unittest.TestCase):
     """Verify OpenAI conversion without making live provider calls."""
+
+    def test_logs_model_dump_fallback_without_item_contents(self) -> None:
+        """Fallback use is observable without exposing the replayed payload."""
+        class ModelDumpOnlyItem:
+            def model_dump(self, **kwargs):
+                return {"type": "reasoning", "encrypted_content": "private-context"}
+
+        with self.assertLogs("tele_secretary.llm.client", level="INFO") as captured:
+            converted = _sdk_to_json_continuation_item(ModelDumpOnlyItem())
+
+        events = [json.loads(record.getMessage()) for record in captured.records]
+        self.assertEqual(events, [{
+            "event": "llm_continuation_model_dump_fallback", "operation_id": "-", "round": 0,
+        }])
+        self.assertEqual(converted["encrypted_content"], "private-context")
+        self.assertNotIn("private-context", str(captured.output))
+
+    def test_to_dict_does_not_log_model_dump_fallback(self) -> None:
+        """Objects offering both methods use to_dict without a fallback event."""
+        class SdkStyleItem:
+            def to_dict(self, **kwargs):
+                return {"type": "reasoning", "summary": []}
+
+            def model_dump(self, **kwargs):
+                raise AssertionError("The fallback must not run when to_dict exists")
+
+        with self.assertNoLogs("tele_secretary.llm.client", level="INFO"):
+            converted = _sdk_to_json_continuation_item(SdkStyleItem())
+        self.assertEqual(converted, {"type": "reasoning", "summary": []})
 
     def test_close_releases_sdk_resources(self) -> None:
         """The owning application can explicitly close the SDK's HTTP client."""

@@ -83,7 +83,7 @@ def safe_error_param(value: object) -> str | None:
     if not isinstance(value, str) or len(value) > 160:
         return None
     root = r"(?:input|tools|model|instructions|store|previous_response_id|include|reasoning)"
-    child = r"(?:id|type|call_id|name|arguments|content|summary|encrypted_content|parameters|properties|items|required|additionalProperties)"
+    child = r"(?:id|type|status|call_id|name|arguments|content|summary|encrypted_content|parameters|properties|items|required|additionalProperties)"
     return value if re.fullmatch(root + r"(?:\[\d+\]|\." + child + r")*", value) else None
 
 
