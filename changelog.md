@@ -5,6 +5,8 @@
 - Fixed reasoning-item replay to omit SDK-added defaults and null reasoning
   status while preserving tool calls and encrypted context. Metadata diagnostics
   now retain rejected status-field parameter paths.
+- Added metadata-only logging when continuation replay uses the model_dump
+  fallback, making its runtime use visible without logging payload contents.
 
 ## 2026-10-25
 

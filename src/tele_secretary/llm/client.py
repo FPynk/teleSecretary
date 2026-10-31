@@ -239,9 +239,11 @@ def _sdk_to_json_continuation_item(output_item: Any) -> Mapping[str, Any] | None
     """Convert one SDK output item into a JSON-compatible continuation mapping."""
     to_dict = getattr(output_item, "to_dict", None)
     model_dump = getattr(output_item, "model_dump", None)
+    # Prefer SDK defaults; model_dump supports objects without OpenAI's to_dict helper.
     if callable(to_dict):
         dumped_item = to_dict(mode="json")
     elif callable(model_dump):
+        log_llm_event(LOGGER, logging.INFO, "llm_continuation_model_dump_fallback")
         dumped_item = model_dump(mode="json", by_alias=True, exclude_unset=True)
     else:
         dumped_item = None
