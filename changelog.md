@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-31
+
+- Standalone CI now validates PR openings, reopenings and updates, plus manual
+  runs; main pushes rely on CI/CD's existing pre-deployment tests instead.
+
 ## 2026-10-25
 
 - Added correlated LLM diagnostics for model rounds, tool outcomes, continuation
